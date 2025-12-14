@@ -74,8 +74,10 @@ func (m *mockNotifier) lastCall() *notificationCall {
 // === Mock Webhook ===
 
 type mockWebhook struct {
-	mu    sync.Mutex
-	calls []webhookCall
+	mu              sync.Mutex
+	calls           []webhookCall
+	shutdownCalled  bool
+	shutdownTimeout time.Duration
 }
 
 type webhookCall struct {
@@ -95,6 +97,14 @@ func (m *mockWebhook) SendAsync(status analyzer.Status, message, sessionID strin
 	})
 }
 
+func (m *mockWebhook) Shutdown(timeout time.Duration) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.shutdownCalled = true
+	m.shutdownTimeout = timeout
+	return nil
+}
+
 func (m *mockWebhook) Send(status analyzer.Status, message, sessionID string) error {
 	m.SendAsync(status, message, sessionID)
 	return nil
@@ -104,6 +114,18 @@ func (m *mockWebhook) wasCalled() bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return len(m.calls) > 0
+}
+
+func (m *mockWebhook) wasShutdownCalled() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.shutdownCalled
+}
+
+func (m *mockWebhook) getShutdownTimeout() time.Duration {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.shutdownTimeout
 }
 
 // === Test Helpers ===
@@ -1049,5 +1071,57 @@ func TestHandleStopEvent_NonexistentTranscriptFile(t *testing.T) {
 	// Should handle gracefully (no error, graceful degradation)
 	if err != nil {
 		t.Errorf("should handle nonexistent transcript gracefully, got error: %v", err)
+	}
+}
+
+// TestHandleHookCallsWebhookShutdown verifies that HandleHook calls
+// webhookSvc.Shutdown() in defer to ensure graceful shutdown of async requests
+func TestHandleHookCallsWebhookShutdown(t *testing.T) {
+	cfg := &config.Config{
+		Notifications: config.NotificationsConfig{
+			Desktop: config.DesktopConfig{Enabled: false},
+			Webhook: config.WebhookConfig{Enabled: true},
+		},
+	}
+
+	handler, _, mockWH := newTestHandler(t, cfg)
+
+	// Create transcript file with Stop event
+	transcript := []jsonl.Message{
+		{
+			Type: "assistant",
+			Message: jsonl.MessageContent{
+				Role: "assistant",
+				Content: []jsonl.Content{
+					{Type: "text", Text: "Task completed"},
+				},
+			},
+			Timestamp: "2025-01-01T12:00:00Z",
+		},
+	}
+	transcriptFile := createTempTranscript(t, transcript)
+
+	hookData := buildHookDataJSON(HookData{
+		SessionID:      "test-shutdown-session",
+		TranscriptPath: transcriptFile,
+		CWD:            "/test",
+	})
+
+	// Call HandleHook - this should call Shutdown() in defer
+	err := handler.HandleHook("Stop", hookData)
+	if err != nil {
+		t.Fatalf("HandleHook failed: %v", err)
+	}
+
+	// Verify that Shutdown was called
+	if !mockWH.wasShutdownCalled() {
+		t.Error("expected webhookSvc.Shutdown() to be called in defer, but it wasn't")
+	}
+
+	// Verify that Shutdown was called with correct timeout (5 seconds)
+	expectedTimeout := 5 * time.Second
+	actualTimeout := mockWH.getShutdownTimeout()
+	if actualTimeout != expectedTimeout {
+		t.Errorf("expected Shutdown timeout %v, got %v", expectedTimeout, actualTimeout)
 	}
 }

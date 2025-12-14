@@ -542,3 +542,82 @@ func TestHTTPError(t *testing.T) {
 		t.Error("Error message should contain response body")
 	}
 }
+
+// TestSenderSendAsyncWithShutdown verifies that SendAsync + Shutdown work together
+// ensuring all async requests complete before shutdown finishes
+func TestSenderSendAsyncWithShutdown(t *testing.T) {
+	receivedRequests := atomic.Int32{}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Small delay to simulate real network
+		time.Sleep(20 * time.Millisecond)
+		receivedRequests.Add(1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	cfg := newTestConfig(server.URL)
+	sender := New(cfg)
+
+	// Send multiple async requests
+	numRequests := 3
+	for i := 0; i < numRequests; i++ {
+		sender.SendAsync(analyzer.StatusTaskComplete, "Test message", "session-123")
+	}
+
+	// Immediately call shutdown - it should wait for all requests
+	err := sender.Shutdown(5 * time.Second)
+	if err != nil {
+		t.Errorf("Shutdown should succeed, got: %v", err)
+	}
+
+	// After shutdown, all requests should have been processed
+	received := receivedRequests.Load()
+	if received != int32(numRequests) {
+		t.Errorf("Expected %d requests to be received, got %d", numRequests, received)
+	}
+}
+
+// TestWebhookShutdownWaitsForRequests verifies that Shutdown actually waits
+// for in-flight requests to complete, not just returns immediately
+func TestWebhookShutdownWaitsForRequests(t *testing.T) {
+	requestCompleted := atomic.Bool{}
+	requestDelay := 300 * time.Millisecond
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(requestDelay)
+		requestCompleted.Store(true)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	cfg := newTestConfig(server.URL)
+	sender := New(cfg)
+
+	// Start async send
+	sender.SendAsync(analyzer.StatusTaskComplete, "Test", "session-123")
+
+	// Give request time to start
+	time.Sleep(50 * time.Millisecond)
+
+	// Measure how long Shutdown takes
+	start := time.Now()
+	err := sender.Shutdown(2 * time.Second)
+	elapsed := time.Since(start)
+
+	if err != nil {
+		t.Errorf("Shutdown failed: %v", err)
+	}
+
+	// Shutdown should have waited for the request (at least ~250ms)
+	// Using 200ms as threshold to account for timing variations
+	if elapsed < 200*time.Millisecond {
+		t.Errorf("Shutdown returned too quickly (%v), expected to wait for request (~%v)", elapsed, requestDelay)
+	}
+
+	// Request should have completed
+	if !requestCompleted.Load() {
+		t.Error("Request should have completed before Shutdown returned")
+	}
+}
+

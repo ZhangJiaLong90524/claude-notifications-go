@@ -272,10 +272,10 @@ func TestE2E_WebhookRetry(t *testing.T) {
 
 	t.Logf("✓ Hook completed in %v", elapsed)
 
-	// Wait for async webhook to complete
-	time.Sleep(500 * time.Millisecond)
+	// NO time.Sleep needed! Shutdown() in defer waits for webhook completion
+	// If this test fails, it means Shutdown() is not working correctly
 
-	// Verify: exactly 3 attempts
+	// Verify: exactly 3 attempts (should already be done after HandleHook returns)
 	finalAttempts := attemptCount.Load()
 	if finalAttempts != 3 {
 		t.Errorf("Expected 3 attempts, got %d", finalAttempts)
@@ -531,6 +531,96 @@ func TestE2E_FixAndTestWorkflow(t *testing.T) {
 	t.Logf("✓ E2E Fix and Test Workflow complete")
 	t.Logf("  Status: %v", call.status)
 	t.Logf("  Message: %s", call.message)
+}
+
+// === E2E Test: Webhook Graceful Shutdown ===
+// Tests: HandleHook waits for webhook completion via Shutdown() in defer
+// This test verifies Issue #6 fix - no time.Sleep, deterministic
+
+func TestE2E_WebhookGracefulShutdown(t *testing.T) {
+	t.Log("Starting E2E Webhook Graceful Shutdown test")
+
+	requestReceived := atomic.Bool{}
+	requestDelay := 200 * time.Millisecond
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Log("Webhook request received, processing...")
+		time.Sleep(requestDelay)
+		requestReceived.Store(true)
+		t.Log("Webhook request completed")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	// Config with real webhook, retry disabled for simplicity
+	cfg := &config.Config{
+		Notifications: config.NotificationsConfig{
+			Desktop: config.DesktopConfig{Enabled: false},
+			Webhook: config.WebhookConfig{
+				Enabled: true,
+				URL:     server.URL,
+				Format:  "json",
+				Retry:   config.RetryConfig{Enabled: false},
+				CircuitBreaker: config.CircuitBreakerConfig{Enabled: false},
+				RateLimit:      config.RateLimitConfig{Enabled: false},
+			},
+		},
+		Statuses: map[string]config.StatusInfo{
+			"task_complete": {Title: "Task Complete"},
+		},
+	}
+
+	pluginRoot := t.TempDir()
+	mockNotif := &mockNotifier{}
+
+	handler := &Handler{
+		cfg:         cfg,
+		dedupMgr:    newTempDedupManager(t),
+		stateMgr:    newTempStateManager(t),
+		notifierSvc: mockNotif,
+		webhookSvc:  webhook.New(cfg), // REAL webhook sender - not mock!
+		pluginRoot:  pluginRoot,
+	}
+
+	// Create transcript with task completion
+	transcript := buildTranscriptWithTools([]string{"Write"}, 200)
+	transcriptPath := createTempTranscript(t, transcript)
+
+	hookData := buildHookDataJSON(HookData{
+		SessionID:      "graceful-shutdown-e2e-test",
+		TranscriptPath: transcriptPath,
+		CWD:            "/test",
+		HookEventName:  "Stop",
+	})
+
+	// Call HandleHook and measure time
+	start := time.Now()
+	err := handler.HandleHook("Stop", hookData)
+	elapsed := time.Since(start)
+
+	if err != nil {
+		t.Fatalf("HandleHook failed: %v", err)
+	}
+
+	// === Key assertions - NO time.Sleep! ===
+
+	// 1. Request should have been received (Shutdown waited for completion)
+	if !requestReceived.Load() {
+		t.Error("CRITICAL: Webhook request should have completed before HandleHook returned. " +
+			"This means Shutdown() in defer is not waiting for in-flight requests!")
+	}
+
+	// 2. Elapsed time should include webhook delay (proves we waited)
+	// Using 150ms threshold to account for timing variations
+	if elapsed < 150*time.Millisecond {
+		t.Errorf("HandleHook returned too quickly (%v), expected >= 150ms. "+
+			"Shutdown() should wait for webhook to complete (~%v)", elapsed, requestDelay)
+	}
+
+	t.Logf("✓ E2E Webhook Graceful Shutdown test PASSED")
+	t.Logf("  Elapsed: %v (expected >= 150ms)", elapsed)
+	t.Logf("  Request received: %v (expected true)", requestReceived.Load())
+	t.Logf("  This confirms Issue #6 is fixed!")
 }
 
 // Helper function

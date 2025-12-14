@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"time"
 
 	"github.com/777genius/claude-notifications/internal/analyzer"
 	"github.com/777genius/claude-notifications/internal/config"
@@ -37,6 +38,7 @@ type notifierInterface interface {
 // webhookInterface defines the interface for sending webhook notifications
 type webhookInterface interface {
 	SendAsync(status analyzer.Status, message, sessionID string)
+	Shutdown(timeout time.Duration) error
 }
 
 // Handler handles hook events
@@ -81,6 +83,13 @@ func (h *Handler) HandleHook(hookEvent string, input io.Reader) error {
 	defer func() {
 		if err := h.notifierSvc.Close(); err != nil {
 			logging.Warn("Failed to close notifier: %v", err)
+		}
+	}()
+
+	// Ensure webhook sender waits for in-flight requests before exit
+	defer func() {
+		if err := h.webhookSvc.Shutdown(5 * time.Second); err != nil {
+			logging.Warn("Failed to shutdown webhook sender: %v", err)
 		}
 	}()
 

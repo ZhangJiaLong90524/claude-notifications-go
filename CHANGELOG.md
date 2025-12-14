@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.1] - 2025-12-14
+
+### Fixed
+- **Webhook notifications never sent** ([#6](https://github.com/777genius/claude-notifications-go/issues/6))
+  - `Shutdown()` now waits for in-flight HTTP requests to complete before exit
+  - Added `defer webhookSvc.Shutdown(5s)` to `HandleHook()` for graceful shutdown
+  - Previously: `cancel()` was called immediately, interrupting HTTP requests
+  - Now: `cancel()` is only called after completion or on timeout
+
+### Added
+- E2E test `TestE2E_WebhookGracefulShutdown` - deterministic graceful shutdown verification
+- Unit tests for `Shutdown()` + `SendAsync()` combination
+- Updated `webhookInterface` to include `Shutdown(timeout)` method
+
 ## [1.2.0] - 2025-11-03
 
 ### Added

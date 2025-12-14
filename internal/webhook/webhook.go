@@ -260,13 +260,12 @@ func (s *Sender) SendAsync(status analyzer.Status, message, sessionID string) {
 
 // Shutdown gracefully shuts down the webhook sender
 // Waits for in-flight requests to complete (with timeout)
+// Only cancels context if timeout is reached
 func (s *Sender) Shutdown(timeout time.Duration) error {
 	logging.Info("Shutting down webhook sender...")
 
-	// Cancel context
-	s.cancel()
-
 	// Wait for in-flight requests with timeout
+	// Do NOT cancel context immediately - let requests complete gracefully
 	done := make(chan struct{})
 	go func() {
 		s.wg.Wait()
@@ -275,9 +274,13 @@ func (s *Sender) Shutdown(timeout time.Duration) error {
 
 	select {
 	case <-done:
+		// All requests completed successfully
+		s.cancel() // Clean up context after successful completion
 		logging.Info("All webhook requests completed")
 		return nil
 	case <-time.After(timeout):
+		// Timeout reached - force cancel remaining requests
+		s.cancel()
 		logging.Warn("Webhook shutdown timeout, some requests may be incomplete")
 		return fmt.Errorf("shutdown timeout after %v", timeout)
 	}
