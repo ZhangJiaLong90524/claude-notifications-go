@@ -45,6 +45,12 @@ func GetAppID(terminalName string) string {
 	}
 }
 
+// GetDesktopEntryID returns the desktop entry ID (without .desktop suffix) for a terminal.
+// This is the value expected by the freedesktop "desktop-entry" notification hint.
+func GetDesktopEntryID(terminalName string) string {
+	return strings.TrimSuffix(GetAppID(terminalName), ".desktop")
+}
+
 // GetWlrctlAppID returns the wlroots app_id for a terminal name.
 func GetWlrctlAppID(terminalName string) string {
 	switch strings.ToLower(terminalName) {
