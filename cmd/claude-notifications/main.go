@@ -11,7 +11,7 @@ import (
 	"github.com/777genius/claude-notifications/internal/notifier"
 )
 
-const version = "1.28.0"
+const version = "1.29.0"
 
 func main() {
 	// Initialize global error handler with panic recovery
@@ -131,7 +131,7 @@ func printUsage() {
 	fmt.Println("  daemon                  Run the notification daemon (Linux only)")
 	fmt.Println("                          For click-to-focus support on desktop notifications")
 	fmt.Println("  focus-window <bundleID> <cwd>")
-	fmt.Println("                          Focus specific VS Code window (internal, used by click-to-focus)")
+	fmt.Println("                          Focus specific app window (internal, used by click-to-focus)")
 	fmt.Println("  version                 Show version information")
 	fmt.Println("  help                    Show this help message")
 	fmt.Println()

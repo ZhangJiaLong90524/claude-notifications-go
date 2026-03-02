@@ -208,7 +208,8 @@ func buildTerminalNotifierArgs(title, message, bundleID, cwd string) []string {
 // buildFocusScript returns the shell command for -execute in terminal-notifier.
 // For Ghostty: uses AXDocument attribute (OSC 7 CWD) via Accessibility API,
 // falling back to plain app activation.
-// For VS Code: invokes the binary's focus-window subcommand (CGo AXUIElement).
+// For Electron editors (VS Code, Cursor): invokes the binary's focus-window
+// subcommand (CGo AXUIElement).
 // For all other apps: uses AppleScript title search by folder name.
 // Returns "" when cwd is empty or unusable (caller should use -activate instead).
 func buildFocusScript(bundleID, cwd string) string {
@@ -225,20 +226,23 @@ func buildFocusScript(bundleID, cwd string) string {
 		return ""
 	}
 
-	if isVSCodeBundleID(bundleID) {
-		// VS Code's AppleScript dictionary doesn't support window enumeration
+	if isElectronEditorBundleID(bundleID) {
+		// Electron editors don't support AppleScript window enumeration
 		// (-1708), so AppleScript is not a viable fallback. Return "" to use
 		// plain -activate if the binary path is unavailable.
-		return buildVSCodeFocusScript(bundleID, cwd)
+		return buildElectronEditorFocusScript(bundleID, cwd)
 	}
 
 	return buildAppleScriptFocusScript(bundleID, folderName)
 }
 
-// isVSCodeBundleID reports whether bundleID is VS Code or VS Code Insiders.
-func isVSCodeBundleID(bundleID string) bool {
+// isElectronEditorBundleID reports whether bundleID belongs to an Electron-based
+// editor (VS Code, Cursor, etc.). These apps don't support AppleScript window
+// enumeration (-1708) and require the binary focus-window subcommand instead.
+func isElectronEditorBundleID(bundleID string) bool {
 	return bundleID == "com.microsoft.VSCode" ||
-		bundleID == "com.microsoft.VSCodeInsiders"
+		bundleID == "com.microsoft.VSCodeInsiders" ||
+		bundleID == "com.todesktop.230313mzl4w4u92" // Cursor
 }
 
 // isGhosttyBundleID reports whether bundleID is Ghostty.
@@ -253,7 +257,7 @@ func shellQuote(s string) string {
 }
 
 // buildBinaryFocusScript builds the -execute script for apps that use the
-// binary's focus-window subcommand (VS Code, Ghostty).
+// binary's focus-window subcommand (Electron editors, Ghostty).
 // Returns "" (causing -activate fallback) if os.Executable() fails.
 func buildBinaryFocusScript(bundleID, cwd string) string {
 	exe, err := os.Executable()
@@ -263,10 +267,11 @@ func buildBinaryFocusScript(bundleID, cwd string) string {
 	return shellQuote(exe) + " focus-window " + shellQuote(bundleID) + " " + shellQuote(cwd)
 }
 
-// buildVSCodeFocusScript builds the -execute script for VS Code.
-// Invokes the binary's focus-window subcommand which activates VS Code,
-// waits for AXWindows to populate, then raises the window matching cwd.
-func buildVSCodeFocusScript(bundleID, cwd string) string {
+// buildElectronEditorFocusScript builds the -execute script for Electron-based
+// editors (VS Code, Cursor). Invokes the binary's focus-window subcommand which
+// activates the app, waits for AXWindows to populate, then raises the window
+// matching cwd.
+func buildElectronEditorFocusScript(bundleID, cwd string) string {
 	return buildBinaryFocusScript(bundleID, cwd)
 }
 

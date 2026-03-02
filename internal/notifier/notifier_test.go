@@ -923,6 +923,7 @@ func TestBuildTerminalNotifierArgs_AllKnownBundleIDs(t *testing.T) {
 		"org.alacritty",
 		"co.zeit.hyper",
 		"com.microsoft.VSCode",
+		"com.todesktop.230313mzl4w4u92", // Cursor
 	}
 
 	for _, bundleID := range bundleIDs {
@@ -1029,6 +1030,22 @@ func TestBuildFocusScript_VSCodeInsiders_UsesBinaryCallback(t *testing.T) {
 	}
 	if strings.Contains(script, "osascript") {
 		t.Errorf("VS Code Insiders focus script should not use osascript, got: %s", script)
+	}
+}
+
+func TestBuildFocusScript_Cursor_UsesBinaryCallback(t *testing.T) {
+	script := buildFocusScript("com.todesktop.230313mzl4w4u92", "/home/user/my-project")
+	if !strings.Contains(script, "focus-window") {
+		t.Errorf("Cursor focus script should use focus-window subcommand, got: %s", script)
+	}
+	if !strings.Contains(script, "com.todesktop.230313mzl4w4u92") {
+		t.Errorf("Cursor focus script should contain bundle ID, got: %s", script)
+	}
+	if !strings.Contains(script, "/home/user/my-project") {
+		t.Errorf("Cursor focus script should contain cwd, got: %s", script)
+	}
+	if strings.Contains(script, "osascript") {
+		t.Errorf("Cursor focus script should not use osascript, got: %s", script)
 	}
 }
 

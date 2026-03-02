@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.29.0] - 2026-03-02
+
+### Added
+- **macOS: click-to-focus support for Cursor IDE** — Cursor (VS Code fork) is now recognized as an Electron-based editor, using the binary `focus-window` subcommand instead of AppleScript (which fails on Electron apps with error -1708). Bundle ID `com.todesktop.230313mzl4w4u92` is auto-detected via `__CFBundleIdentifier` ([#39](https://github.com/777genius/claude-notifications-go/issues/39))
+
+### Changed
+- Renamed internal `isVSCodeBundleID` → `isElectronEditorBundleID` and `buildVSCodeFocusScript` → `buildElectronEditorFocusScript` to better reflect that the logic applies to all Electron-based editors, not just VS Code
+
 ## [1.28.0] - 2026-03-02
 
 ### Added
