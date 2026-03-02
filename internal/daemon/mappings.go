@@ -160,6 +160,11 @@ func GetTerminalName() string {
 		return "gnome-terminal"
 	}
 
+	// Check Terminator (does not set TERM_PROGRAM, but always sets TERMINATOR_UUID)
+	if os.Getenv("TERMINATOR_UUID") != "" {
+		return "terminator"
+	}
+
 	// Fallback to generic terminal
 	return "Terminal"
 }

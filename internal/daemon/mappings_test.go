@@ -9,7 +9,7 @@ import (
 // saveTerminalEnv saves all terminal-related env vars and returns a restore function.
 func saveTerminalEnv(t *testing.T) func() {
 	t.Helper()
-	vars := []string{"TERM_PROGRAM", "VSCODE_INJECTION", "VSCODE_GIT_IPC_HANDLE", "GNOME_TERMINAL_SCREEN", "GNOME_TERMINAL_SERVICE"}
+	vars := []string{"TERM_PROGRAM", "VSCODE_INJECTION", "VSCODE_GIT_IPC_HANDLE", "GNOME_TERMINAL_SCREEN", "GNOME_TERMINAL_SERVICE", "TERMINATOR_UUID"}
 	type envState struct {
 		value string
 		isSet bool
@@ -448,6 +448,32 @@ func TestGetTerminalName_GnomeTerminalService(t *testing.T) {
 	result := GetTerminalName()
 	if result != "gnome-terminal" {
 		t.Errorf("GetTerminalName() with GNOME_TERMINAL_SERVICE = %q, want %q", result, "gnome-terminal")
+	}
+}
+
+func TestGetTerminalName_TerminatorUUID(t *testing.T) {
+	restore := saveTerminalEnv(t)
+	defer restore()
+
+	os.Setenv("TERMINATOR_UUID", "urn:uuid:12345678-1234-1234-1234-123456789abc")
+
+	result := GetTerminalName()
+	if result != "terminator" {
+		t.Errorf("GetTerminalName() with TERMINATOR_UUID = %q, want %q", result, "terminator")
+	}
+}
+
+func TestGetTerminalName_TermProgramOverridesTerminatorUUID(t *testing.T) {
+	restore := saveTerminalEnv(t)
+	defer restore()
+
+	// TERM_PROGRAM should take priority over TERMINATOR_UUID
+	os.Setenv("TERM_PROGRAM", "alacritty")
+	os.Setenv("TERMINATOR_UUID", "urn:uuid:12345678-1234-1234-1234-123456789abc")
+
+	result := GetTerminalName()
+	if result != "alacritty" {
+		t.Errorf("GetTerminalName() with TERM_PROGRAM+TERMINATOR_UUID = %q, want %q", result, "alacritty")
 	}
 }
 
