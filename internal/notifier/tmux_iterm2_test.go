@@ -3,9 +3,33 @@ package notifier
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
+
+// overrideHome sets HOME (Unix) and USERPROFILE (Windows) to dir,
+// so that os.UserHomeDir() returns dir on all platforms.
+// Returns a cleanup function that restores the original values.
+func overrideHome(t *testing.T, dir string) {
+	t.Helper()
+	oldHome := os.Getenv("HOME")
+	oldProfile := os.Getenv("USERPROFILE")
+	os.Setenv("HOME", dir)
+	if runtime.GOOS == "windows" {
+		os.Setenv("USERPROFILE", dir)
+	}
+	t.Cleanup(func() {
+		os.Setenv("HOME", oldHome)
+		if runtime.GOOS == "windows" {
+			if oldProfile != "" {
+				os.Setenv("USERPROFILE", oldProfile)
+			} else {
+				os.Unsetenv("USERPROFILE")
+			}
+		}
+	})
+}
 
 // setupFakeiTerm2Env creates a temporary directory with a fake iTerm2 venv
 // and helper script, overrides HOME and CLAUDE_PLUGIN_ROOT to point there,
@@ -18,21 +42,27 @@ func setupFakeiTerm2Env(t *testing.T) string {
 	// Create fake venv with python3 binary
 	venvBin := filepath.Join(tmpDir, ".claude", "claude-notifications-go",
 		"iterm2-venv", "bin")
-	os.MkdirAll(venvBin, 0o755)
-	os.WriteFile(filepath.Join(venvBin, "python3"), []byte("#!/bin/sh\n"), 0o755)
+	if err := os.MkdirAll(venvBin, 0o755); err != nil {
+		t.Fatalf("failed to create venv dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(venvBin, "python3"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatalf("failed to write fake python3: %v", err)
+	}
 
 	// Create fake helper script
 	scriptsDir := filepath.Join(tmpDir, "scripts")
-	os.MkdirAll(scriptsDir, 0o755)
-	os.WriteFile(filepath.Join(scriptsDir, "iterm2-select-tab.py"), []byte(""), 0o644)
+	if err := os.MkdirAll(scriptsDir, 0o755); err != nil {
+		t.Fatalf("failed to create scripts dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(scriptsDir, "iterm2-select-tab.py"), []byte(""), 0o644); err != nil {
+		t.Fatalf("failed to write fake script: %v", err)
+	}
 
-	// Override HOME and CLAUDE_PLUGIN_ROOT
-	oldHome := os.Getenv("HOME")
+	// Override HOME (+ USERPROFILE on Windows) and CLAUDE_PLUGIN_ROOT
+	overrideHome(t, tmpDir)
 	oldRoot := os.Getenv("CLAUDE_PLUGIN_ROOT")
-	os.Setenv("HOME", tmpDir)
 	os.Setenv("CLAUDE_PLUGIN_ROOT", tmpDir)
 	t.Cleanup(func() {
-		os.Setenv("HOME", oldHome)
 		if oldRoot != "" {
 			os.Setenv("CLAUDE_PLUGIN_ROOT", oldRoot)
 		} else {
@@ -48,12 +78,10 @@ func setupFakeiTerm2Env(t *testing.T) string {
 func withIsolatedEnv(t *testing.T) {
 	t.Helper()
 	tmpDir := t.TempDir()
-	oldHome := os.Getenv("HOME")
+	overrideHome(t, tmpDir)
 	oldRoot := os.Getenv("CLAUDE_PLUGIN_ROOT")
-	os.Setenv("HOME", tmpDir)
 	os.Unsetenv("CLAUDE_PLUGIN_ROOT")
 	t.Cleanup(func() {
-		os.Setenv("HOME", oldHome)
 		if oldRoot != "" {
 			os.Setenv("CLAUDE_PLUGIN_ROOT", oldRoot)
 		} else {
@@ -164,15 +192,17 @@ func TestGetiTerm2PythonEnv_MissingPluginRoot(t *testing.T) {
 	// Create fake venv but do NOT set CLAUDE_PLUGIN_ROOT
 	venvBin := filepath.Join(tmpDir, ".claude", "claude-notifications-go",
 		"iterm2-venv", "bin")
-	os.MkdirAll(venvBin, 0o755)
-	os.WriteFile(filepath.Join(venvBin, "python3"), []byte("#!/bin/sh\n"), 0o755)
+	if err := os.MkdirAll(venvBin, 0o755); err != nil {
+		t.Fatalf("failed to create venv dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(venvBin, "python3"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatalf("failed to write fake python3: %v", err)
+	}
 
-	oldHome := os.Getenv("HOME")
+	overrideHome(t, tmpDir)
 	oldRoot := os.Getenv("CLAUDE_PLUGIN_ROOT")
-	os.Setenv("HOME", tmpDir)
 	os.Unsetenv("CLAUDE_PLUGIN_ROOT")
 	t.Cleanup(func() {
-		os.Setenv("HOME", oldHome)
 		if oldRoot != "" {
 			os.Setenv("CLAUDE_PLUGIN_ROOT", oldRoot)
 		} else {

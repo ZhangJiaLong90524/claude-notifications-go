@@ -42,16 +42,29 @@ make test-race
 make lint
 ```
 
-## 4. Commit and tag
+## 4. Commit, push, and wait for CI
 
 ```bash
 git add -A
 git commit -m "release: vX.Y.Z"
-git tag vX.Y.Z
-git push origin main --tags
+git push origin main
 ```
 
-## 5. GitHub Release
+**Wait for ALL CI checks to pass before tagging:**
+
+```bash
+gh run list --limit 5          # check status
+gh run watch <run-id>          # wait for a specific run
+```
+
+All three workflows must be green: Ubuntu CI, macOS CI, Windows CI. If any fail — fix, push again, and wait. Do NOT create the tag until CI is green.
+
+## 5. Tag and release
+
+```bash
+git tag vX.Y.Z
+git push origin --tags
+```
 
 The `release.yml` workflow triggers on tag push and builds binaries for all platforms automatically.
 
