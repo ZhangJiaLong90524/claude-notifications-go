@@ -216,6 +216,36 @@ func TestTmuxE2E(t *testing.T) {
 		}
 	})
 
+	t.Run("control_mode_false_for_normal_client", func(t *testing.T) {
+		// A normal (non -CC) tmux client should not report control mode
+		if IsTmuxControlMode() {
+			t.Error("should be false for normal tmux client")
+		}
+	})
+
+	t.Run("non_cc_mode_uses_select_window", func(t *testing.T) {
+		// In a normal tmux session (not -CC), buildTmuxClickArgs should
+		// use select-window, not the iTerm2 Python API
+		oldPane := os.Getenv("TMUX_PANE")
+		os.Setenv("TMUX_PANE", editorPaneID)
+		t.Cleanup(func() {
+			if oldPane != "" {
+				os.Setenv("TMUX_PANE", oldPane)
+			} else {
+				os.Unsetenv("TMUX_PANE")
+			}
+		})
+
+		args, err := buildTmuxClickArgs("Test", "Msg", "com.test")
+		if err != nil {
+			t.Fatalf("buildTmuxClickArgs failed: %v", err)
+		}
+		executeCmd := getArgValue(args, "-execute")
+		if !strings.Contains(executeCmd, "select-window") {
+			t.Errorf("expected select-window in normal mode, got: %s", executeCmd)
+		}
+	})
+
 	t.Run("socket_extraction_edge_cases", func(t *testing.T) {
 		// Save current TMUX value
 		savedTmux := os.Getenv("TMUX")

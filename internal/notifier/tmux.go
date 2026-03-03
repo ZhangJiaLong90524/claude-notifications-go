@@ -60,6 +60,43 @@ func GetTmuxPaneTarget() (string, error) {
 	return target, nil
 }
 
+// IsTmuxControlMode returns true if any tmux client attached to the current
+// server is running in control mode (-CC), typically used by iTerm2.
+// In control mode, standard tmux select-window doesn't cause iTerm2 to
+// switch tabs; the iTerm2 Python API must be used instead.
+//
+// Uses list-clients (not display-message) because display-message evaluates
+// #{client_control_mode} for the temporary command-line client we spawn,
+// which is never in control mode. list-clients enumerates all persistent
+// (attached) clients, so we can check if ANY is in control mode.
+func IsTmuxControlMode() bool {
+	if !IsTmux() {
+		return false
+	}
+	tmuxPath := getTmuxPath()
+	socketPath := getTmuxSocketPath()
+
+	var cmd *exec.Cmd
+	if socketPath != "" {
+		cmd = exec.Command(tmuxPath, "-S", socketPath,
+			"list-clients", "-F", "#{client_control_mode}")
+	} else {
+		cmd = exec.Command(tmuxPath,
+			"list-clients", "-F", "#{client_control_mode}")
+	}
+
+	output, err := cmd.Output()
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(string(output), "\n") {
+		if strings.TrimSpace(line) == "1" {
+			return true
+		}
+	}
+	return false
+}
+
 // buildTmuxNotifierArgs constructs command-line arguments for terminal-notifier
 // when running inside tmux. Uses both -activate (to focus the terminal app)
 // and -execute (to switch to the correct tmux window/pane) on click.

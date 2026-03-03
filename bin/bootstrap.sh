@@ -415,6 +415,61 @@ download_binary() {
 
 # ──────────────────────────────────────────────
 
+setup_iterm2_venv() {
+    # Only relevant on macOS
+    [ "$(uname -s)" = "Darwin" ] || return 0
+
+    # Check if user has iTerm2 (current terminal or installed)
+    local is_iterm=false
+    [ "${TERM_PROGRAM:-}" = "iTerm.app" ] && is_iterm=true
+    [ "${__CFBundleIdentifier:-}" = "com.googlecode.iterm2" ] && is_iterm=true
+    [ "$is_iterm" = false ] && [ -d "/Applications/iTerm.app" ] && is_iterm=true
+    [ "$is_iterm" = true ] || return 0
+
+    # tmux must be installed
+    command -v tmux &>/dev/null || return 0
+
+    # Use $HOME/.claude explicitly (not $CLAUDE_HOME) — the Go code resolves
+    # the venv path via os.UserHomeDir()/.claude/..., so the venv must be there.
+    local VENV_DIR="$HOME/.claude/claude-notifications-go/iterm2-venv"
+
+    # Skip if venv already exists and is functional
+    if [ -x "$VENV_DIR/bin/python3" ] && \
+       "$VENV_DIR/bin/python3" -c "import iterm2" 2>/dev/null; then
+        echo -e "${GREEN}  ✓${NC} iTerm2 Python API venv already set up"
+        return 0
+    fi
+
+    # Find Python 3
+    local python3_path=""
+    command -v python3 &>/dev/null && python3_path="$(command -v python3)"
+
+    if [ -z "$python3_path" ]; then
+        echo ""
+        echo -e "${YELLOW}  ⚠ Python 3 not found. iTerm2 tmux -CC click-to-focus unavailable.${NC}"
+        echo -e "${YELLOW}    Install Python 3 and re-run bootstrap to enable.${NC}"
+        return 0
+    fi
+
+    echo ""
+    echo -e "${BLUE}  Setting up iTerm2 tmux -CC support...${NC}"
+
+    if ! "$python3_path" -m venv "$VENV_DIR" 2>/dev/null; then
+        echo -e "${YELLOW}  ⚠ Could not create Python venv, skipping${NC}"
+        return 0
+    fi
+
+    if "$VENV_DIR/bin/pip" install --quiet iterm2 2>/dev/null; then
+        echo -e "${GREEN}  ✓${NC} iTerm2 Python API support installed"
+        echo -e "${BLUE}    Enable 'Python API' in iTerm2 → Settings → General → Magic${NC}"
+    else
+        echo -e "${YELLOW}  ⚠ Could not install iterm2 module${NC}"
+        rm -rf "$VENV_DIR" 2>/dev/null
+    fi
+}
+
+# ──────────────────────────────────────────────
+
 print_success() {
     echo ""
     echo -e "${GREEN}============================================${NC}"
@@ -440,6 +495,7 @@ main() {
     install_plugin
     find_plugin_root
     download_binary
+    setup_iterm2_venv
     print_success
 }
 

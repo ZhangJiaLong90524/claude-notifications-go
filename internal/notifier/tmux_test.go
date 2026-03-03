@@ -5,6 +5,19 @@ import (
 	"testing"
 )
 
+func TestIsTmuxControlMode_NotInTmux(t *testing.T) {
+	old := os.Getenv("TMUX")
+	os.Unsetenv("TMUX")
+	t.Cleanup(func() {
+		if old != "" {
+			os.Setenv("TMUX", old)
+		}
+	})
+	if IsTmuxControlMode() {
+		t.Error("should be false when not in tmux")
+	}
+}
+
 func TestGetTmuxPaneTarget_PrefersEnvVar(t *testing.T) {
 	old := os.Getenv("TMUX_PANE")
 	os.Setenv("TMUX_PANE", "%42")

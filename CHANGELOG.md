@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.30.0] - 2026-03-03
+
+### Added
+- **macOS: iTerm2 + tmux -CC (control mode) click-to-focus** — when using iTerm2's tmux integration (`tmux -CC`), clicking a notification now switches to the correct iTerm2 tab via the iTerm2 Python API. Standard `tmux select-window` doesn't work in control mode; the plugin auto-detects -CC mode and falls back gracefully if the Python API is unavailable ([#41](https://github.com/777genius/claude-notifications-go/issues/41))
+- **Automatic iTerm2 Python venv setup** — `bootstrap.sh` and `install.sh` now create a Python venv with the `iterm2` module for tmux -CC support (macOS only, when iTerm2 and tmux are detected)
+
 ## [1.29.2] - 2026-03-03
 
 ### Fixed

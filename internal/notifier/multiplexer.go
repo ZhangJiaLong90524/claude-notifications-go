@@ -40,11 +40,26 @@ func detectMultiplexerArgs(title, message, bundleID string) ([]string, string) {
 }
 
 // buildTmuxClickArgs captures tmux target and builds notifier args.
+// For iTerm2 tmux -CC (control mode), uses the iTerm2 Python API helper
+// instead of standard tmux select-window (which doesn't switch iTerm2 tabs).
 func buildTmuxClickArgs(title, message, bundleID string) ([]string, error) {
 	target, err := GetTmuxPaneTarget()
 	if err != nil {
 		return nil, err
 	}
+
+	if IsTmuxControlMode() {
+		args, err := buildTmuxCCNotifierArgs(title, message, target, bundleID)
+		if err != nil {
+			logging.Warn("tmux -CC mode detected but iTerm2 Python API unavailable: %v. "+
+				"Tab switch may not work. Run bootstrap.sh to set up.", err)
+			// Fallback to standard tmux select-window
+		} else {
+			logging.Debug("tmux -CC mode: using iTerm2 Python API for tab switching")
+			return args, nil
+		}
+	}
+
 	return buildTmuxNotifierArgs(title, message, target, bundleID), nil
 }
 

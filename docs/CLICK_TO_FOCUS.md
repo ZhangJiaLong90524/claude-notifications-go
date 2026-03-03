@@ -69,7 +69,34 @@ Falls back to standard notifications if no focus tool is available.
 
 ## Multiplexers
 
-On both macOS and Linux, click-to-focus supports **tmux** and **zellij** — clicking a notification switches to the correct session/pane/tab.
+On both macOS and Linux, click-to-focus supports **tmux**, **zellij**, **WezTerm**, and **kitty** — clicking a notification switches to the correct session/pane/tab.
+
+### iTerm2 + tmux Control Mode (-CC)
+
+When using iTerm2's tmux integration (`tmux -CC`), standard `tmux select-window` doesn't switch iTerm2 tabs. The plugin detects control mode automatically and uses the iTerm2 Python API instead.
+
+**Requirements:**
+1. Python 3 installed
+2. iTerm2 → Settings → General → Magic → **Enable Python API**
+3. iterm2 venv (set up automatically by `bootstrap.sh` / `install.sh`)
+
+**Manual setup** (if automatic setup failed):
+```bash
+python3 -m venv ~/.claude/claude-notifications-go/iterm2-venv
+~/.claude/claude-notifications-go/iterm2-venv/bin/pip install iterm2
+```
+
+**Diagnostics:**
+```bash
+# Show the plugin root path (run inside Claude Code hook context)
+echo "$CLAUDE_PLUGIN_ROOT"
+
+# List all iTerm2 tabs with tmux pane mappings
+~/.claude/claude-notifications-go/iterm2-venv/bin/python3 \
+  "$CLAUDE_PLUGIN_ROOT/scripts/iterm2-select-tab.py" --list
+```
+
+If the Python API is not available, the plugin falls back to standard `tmux select-window` (which may not switch iTerm2 tabs in -CC mode).
 
 ## Windows
 
