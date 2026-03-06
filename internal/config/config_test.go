@@ -558,7 +558,7 @@ func TestApplyDefaults_SetsDefaultForNilCooldown(t *testing.T) {
 	cfg.ApplyDefaults()
 
 	assert.Equal(t, intPtr(12), cfg.Notifications.SuppressQuestionAfterTaskCompleteSeconds)
-	assert.Equal(t, intPtr(0), cfg.Notifications.SuppressQuestionAfterAnyNotificationSeconds) // Disabled by default
+	assert.Equal(t, intPtr(defaultSuppressQuestionAfterAnyNotificationSeconds), cfg.Notifications.SuppressQuestionAfterAnyNotificationSeconds)
 }
 
 func TestGetCooldownSeconds_Defaults(t *testing.T) {
@@ -566,7 +566,7 @@ func TestGetCooldownSeconds_Defaults(t *testing.T) {
 
 	// nil should return defaults
 	assert.Equal(t, 12, cfg.GetSuppressQuestionAfterTaskCompleteSeconds())
-	assert.Equal(t, 0, cfg.GetSuppressQuestionAfterAnyNotificationSeconds()) // Disabled by default
+	assert.Equal(t, defaultSuppressQuestionAfterAnyNotificationSeconds, cfg.GetSuppressQuestionAfterAnyNotificationSeconds())
 }
 
 func TestGetCooldownSeconds_Zero(t *testing.T) {

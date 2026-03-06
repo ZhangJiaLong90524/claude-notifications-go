@@ -120,8 +120,8 @@ static int hasScreenRecordingAccess(void) {
 	return CGPreflightScreenCaptureAccess() ? 1 : 0;
 }
 
-static void requestScreenRecordingAccess(void) {
-	CGRequestScreenCaptureAccess();
+static int requestScreenRecordingAccess(void) {
+	return CGRequestScreenCaptureAccess() ? 1 : 0;
 }
 
 // raiseWindowByAXDocument enumerates AXWindows for the given PID and raises
@@ -310,7 +310,14 @@ func FocusAppWindow(bundleID, cwd string) error {
 
 	prepResult := C.findSwitchAndActivate(C.int(pid), cFolder)
 	if prepResult < 0 {
-		promptScreenRecordingOnce()
+		// Ask macOS for permission first. If access is still unavailable after
+		// the system prompt flow, show our own explanation with a Settings link.
+		if C.requestScreenRecordingAccess() != 0 {
+			prepResult = C.findSwitchAndActivate(C.int(pid), cFolder)
+		}
+		if prepResult < 0 {
+			promptScreenRecordingOnce()
+		}
 		C.activateByPID(C.int(pid))
 		return fmt.Errorf("Screen Recording permission required: grant it in System Settings → Privacy & Security → Screen Recording, then try again")
 	}
@@ -356,7 +363,7 @@ func promptScreenRecordingOnce() {
 }
 
 // promptAccessibilityOnce sends a one-time notification explaining why
-// Accessibility access is needed for Ghostty click-to-focus.
+// Accessibility access is needed for click-to-focus window selection.
 func promptAccessibilityOnce() {
 	stableDir, err := config.GetStableConfigDir()
 	if err != nil {
@@ -374,7 +381,7 @@ func promptAccessibilityOnce() {
 
 	_ = SendQuickNotification(
 		"Accessibility Access Needed",
-		"Click-to-focus for Ghostty uses the Accessibility API to find the right window. Click to open Settings.",
+		"Click-to-focus uses the Accessibility API to find and raise the right window. Click to open Settings.",
 		`open "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"`,
 	)
 }

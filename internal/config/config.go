@@ -122,6 +122,8 @@ func stringPtr(v string) *string {
 	return &v
 }
 
+const defaultSuppressQuestionAfterAnyNotificationSeconds = 7
+
 // DefaultConfig returns a config with sensible defaults
 func DefaultConfig() *Config {
 	// Get plugin root from environment, fallback to current directory
@@ -165,7 +167,7 @@ func DefaultConfig() *Config {
 				},
 			},
 			SuppressQuestionAfterTaskCompleteSeconds:    intPtr(12),
-			SuppressQuestionAfterAnyNotificationSeconds: intPtr(0),
+			SuppressQuestionAfterAnyNotificationSeconds: intPtr(defaultSuppressQuestionAfterAnyNotificationSeconds),
 		},
 		Statuses: map[string]StatusInfo{
 			"task_complete": {
@@ -372,7 +374,7 @@ func (c *Config) ApplyDefaults() {
 		c.Notifications.SuppressQuestionAfterTaskCompleteSeconds = intPtr(12)
 	}
 	if c.Notifications.SuppressQuestionAfterAnyNotificationSeconds == nil {
-		c.Notifications.SuppressQuestionAfterAnyNotificationSeconds = intPtr(0) // Disabled by default
+		c.Notifications.SuppressQuestionAfterAnyNotificationSeconds = intPtr(defaultSuppressQuestionAfterAnyNotificationSeconds)
 	}
 
 	// Status defaults
@@ -488,10 +490,10 @@ func (c *Config) GetSuppressQuestionAfterTaskCompleteSeconds() int {
 }
 
 // GetSuppressQuestionAfterAnyNotificationSeconds returns the cooldown in seconds
-// after any notification before question notifications are allowed (default: 7)
+// after any notification before question notifications are allowed (default: 7).
 func (c *Config) GetSuppressQuestionAfterAnyNotificationSeconds() int {
 	if c.Notifications.SuppressQuestionAfterAnyNotificationSeconds == nil {
-		return 7
+		return defaultSuppressQuestionAfterAnyNotificationSeconds
 	}
 	return *c.Notifications.SuppressQuestionAfterAnyNotificationSeconds
 }
