@@ -189,11 +189,12 @@ if [ "$NEED_INSTALL" = 1 ]; then
 
             if [ "$PREV_KEY" != "$STAMP_KEY" ]; then
                 printf '%s\n' "$STAMP_KEY" > "$STAMP_FILE" 2>/dev/null || true
-                if [ "$NEED_FORCE" = 1 ]; then
-                    printf '{"systemMessage":"[claude-notifications] Updated to v%s"}\n' "$NEW_VER"
-                else
-                    printf '{"systemMessage":"[claude-notifications] Installed v%s"}\n' "$NEW_VER"
-                fi
+                # Disabled: the system message was shown too frequently despite the stamp file.
+                # if [ "$NEED_FORCE" = 1 ]; then
+                #     printf '{"systemMessage":"[claude-notifications] Updated to v%s"}\n' "$NEW_VER"
+                # else
+                #     printf '{"systemMessage":"[claude-notifications] Installed v%s"}\n' "$NEW_VER"
+                # fi
             fi
         fi
     fi

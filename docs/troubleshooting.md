@@ -68,3 +68,24 @@ If your temp directory is on a different drive than your user profile (or where 
 ### Fix
 
 Make sure `%TEMP%` and `%TMP%` point to a directory on the same drive as `%USERPROFILE%` (or where Claude stores its plugin directories), then restart your terminal/app.
+
+## Windows / Git Bash: binary download fails from GitHub Releases
+
+### Symptom
+
+Bootstrap or `/claude-notifications-go:init` installs the plugin itself, but downloading `claude-notifications-windows-amd64.exe` fails with an empty or generic network error.
+
+### Why it happens
+
+`raw.githubusercontent.com` and `github.com` may still work, but release assets are served from GitHub's release CDN. On corporate Windows machines, Git Bash `curl` often fails there because of:
+
+- Proxy authentication or missing proxy environment variables
+- TLS inspection with an untrusted corporate root CA
+- Schannel certificate revocation checks blocking the request
+
+### What to check
+
+1. If your company requires a proxy, make sure the terminal running Claude Code or bootstrap has `HTTPS_PROXY`, `HTTP_PROXY`, or `ALL_PROXY` configured.
+2. If your network inspects TLS traffic, ensure Git Bash `curl` trusts the corporate CA certificate.
+3. Retry from another network or from WSL to confirm whether the issue is network-specific.
+4. As a fallback, open the latest release page, download `claude-notifications-windows-amd64.exe`, place it into the plugin `bin` directory, and then re-run `/claude-notifications-go:init`.

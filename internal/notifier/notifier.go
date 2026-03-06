@@ -113,7 +113,7 @@ func (n *Notifier) SendDesktop(status analyzer.Status, message, sessionID, cwd s
 				return nil
 			}
 		} else {
-			logging.Debug("terminal-notifier not available, using beeep (run /claude-notifications-go:notifications-init to enable click-to-focus)")
+			logging.Debug("terminal-notifier not available, using beeep (run /claude-notifications-go:init to enable click-to-focus)")
 		}
 	}
 

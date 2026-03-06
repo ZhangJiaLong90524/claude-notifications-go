@@ -488,10 +488,10 @@ func (c *Config) GetSuppressQuestionAfterTaskCompleteSeconds() int {
 }
 
 // GetSuppressQuestionAfterAnyNotificationSeconds returns the cooldown in seconds
-// after any notification before question notifications are allowed (default: 0 = disabled)
+// after any notification before question notifications are allowed (default: 7)
 func (c *Config) GetSuppressQuestionAfterAnyNotificationSeconds() int {
 	if c.Notifications.SuppressQuestionAfterAnyNotificationSeconds == nil {
-		return 0 // Disabled by default
+		return 7
 	}
 	return *c.Notifications.SuppressQuestionAfterAnyNotificationSeconds
 }

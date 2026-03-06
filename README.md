@@ -66,14 +66,16 @@ Then restart Claude Code and optionally run `/claude-notifications-go:settings` 
 
 The binary is downloaded once and cached locally. You can re-run `/claude-notifications-go:settings` anytime to reconfigure.
 
-> If the bootstrap script doesn't work for your environment, use the [Manual Install](#manual-install) below.
+> If the bootstrap script doesn't work for your environment, use the [Manual Install](#manual-install) steps below inside Claude Code.
 
 ### Manual Install
 
 <details>
-<summary>Step-by-step installation (if bootstrap doesn't work)</summary>
+<summary>Step-by-step installation inside Claude Code (if bootstrap doesn't work)</summary>
 
-```bash
+Run these slash commands in the Claude Code chat, not in your system terminal:
+
+```text
 # 1) Add marketplace
 /plugin marketplace add 777genius/claude-notifications-go
 # 2) Install plugin
@@ -209,7 +211,7 @@ Edit the config file directly:
       "headers": {}
     },
     "suppressQuestionAfterTaskCompleteSeconds": 12,
-    "suppressQuestionAfterAnyNotificationSeconds": 12,
+    "suppressQuestionAfterAnyNotificationSeconds": 7,
     "notifyOnSubagentStop": false,
     "notifyOnTextResponse": true,
     "respectJudgeMode": true,
@@ -261,7 +263,7 @@ Edit the config file directly:
 | `notifyOnTextResponse` | `true` | Send notifications for text-only responses (no tool usage) |
 | `respectJudgeMode` | `true` | Honor `CLAUDE_HOOK_JUDGE_MODE=true` env var to suppress notifications |
 | `suppressQuestionAfterTaskCompleteSeconds` | `12` | Suppress question notifications for N seconds after task complete |
-| `suppressQuestionAfterAnyNotificationSeconds` | `12` | Suppress question notifications for N seconds after any notification |
+| `suppressQuestionAfterAnyNotificationSeconds` | `7` | Suppress question notifications for N seconds after any notification |
 | `suppressFilters` | `[]` | Array of rules to suppress notifications by status, git branch, and/or folder. Each rule is an AND of its fields; omitted fields match any value. Set `gitBranch` to `""` to match sessions outside git repos. |
 
 Each status can be individually disabled by adding `"enabled": false`.
@@ -378,6 +380,7 @@ See **[Troubleshooting Guide](docs/troubleshooting.md)** for common issues:
 
 - **Ubuntu 24.04**: `EXDEV: cross-device link not permitted` during `/plugin install` (TMPDIR workaround)
 - **Windows**: install issues related to `%TEMP%` / `%TMP%` location
+- **Windows / Git Bash**: GitHub Releases download fails because of proxy / TLS inspection / certificate revocation
 
 ## Documentation
 

@@ -32,6 +32,9 @@ MAX_RETRIES=3
 RETRY_DELAY=2
 CURL_TIMEOUT=60
 WGET_TIMEOUT=60
+CONNECT_TIMEOUT=20
+CURL_EXTRA_OPTS=()
+CURL_COMPAT_OPTS=()
 
 # GitHub repository (can be overridden via env for testing)
 REPO="777genius/claude-notifications-go"
@@ -103,6 +106,135 @@ detect_platform() {
     LIST_DEVICES_PATH="${SCRIPT_DIR}/${LIST_DEVICES_NAME}"
     LIST_SOUNDS_PATH="${SCRIPT_DIR}/${LIST_SOUNDS_NAME}"
     CHECKSUMS_PATH="${SCRIPT_DIR}/.checksums.txt"
+
+    configure_curl_options
+}
+
+curl_supports_option() {
+    local option="$1"
+    curl --help all 2>/dev/null | grep -q -- "$option"
+}
+
+configure_curl_options() {
+    CURL_EXTRA_OPTS=()
+    CURL_COMPAT_OPTS=()
+
+    if ! command -v curl &>/dev/null; then
+        return 0
+    fi
+
+    if [ "$PLATFORM" = "windows" ] && curl_supports_option "--ssl-no-revoke"; then
+        # Git for Windows typically uses Schannel. Corporate TLS inspection often breaks
+        # revocation checks for GitHub Releases, while the rest of GitHub still works.
+        CURL_EXTRA_OPTS+=(--ssl-no-revoke)
+    fi
+
+    if curl_supports_option "--http1.1"; then
+        CURL_COMPAT_OPTS+=(--http1.1)
+    fi
+}
+
+clean_download_error_output() {
+    printf '%s\n' "$1" | tr '\r' '\n' | sed -E \
+        -e 's#(https?://)[^/@[:space:]]+:[^@[:space:]]+@#\1***:***@#g' \
+        -e 's/^[[:space:]]+//; s/[[:space:]]+$//' \
+        -e '/^$/d' \
+        -e '/^% Total/d' \
+        -e '/^  % Total/d' \
+        -e '/^#+$/d' \
+        -e '/^[#=[:space:]]*[0-9.]+%$/d'
+}
+
+print_download_error_details() {
+    local error_text="$1"
+    local cleaned
+    local filtered
+
+    cleaned=$(clean_download_error_output "$error_text")
+    if [ -z "$cleaned" ]; then
+        return 1
+    fi
+
+    filtered=$(printf '%s\n' "$cleaned" | grep -iE "error|fail|refused|timeout|resolve|ssl|certificate|connect|proxy|schannel|tls|handshake|reset|closed|abort|denied|host|http/2|revoke" | head -5 || true)
+    if [ -n "$filtered" ]; then
+        printf '%s\n' "$filtered" >&2
+    else
+        printf '%s\n' "$cleaned" | head -5 >&2
+    fi
+
+    return 0
+}
+
+get_proxy_env_names() {
+    local names=()
+    local var_name
+
+    for var_name in HTTPS_PROXY https_proxy HTTP_PROXY http_proxy ALL_PROXY all_proxy; do
+        if [ -n "${!var_name}" ]; then
+            names+=("$var_name")
+        fi
+    done
+
+    printf '%s' "${names[*]}"
+}
+
+print_windows_proxy_hint() {
+    local proxy_envs
+
+    [ "$PLATFORM" = "windows" ] || return 0
+
+    proxy_envs=$(get_proxy_env_names)
+    if [ -n "$proxy_envs" ]; then
+        echo -e "${YELLOW}→ Proxy environment detected: ${proxy_envs}${NC}" >&2
+        echo -e "${YELLOW}  If your proxy inspects TLS, ensure Git Bash curl trusts the corporate CA.${NC}" >&2
+    else
+        echo -e "${YELLOW}→ Windows/Git Bash downloads can fail behind corporate proxies or TLS inspection.${NC}" >&2
+    fi
+}
+
+print_curl_failure_guidance() {
+    local http_code="$1"
+    local curl_exit_code="$2"
+    local curl_error="$3"
+
+    if [ "$http_code" = "000" ] || [ -z "$http_code" ]; then
+        echo -e "${YELLOW}→ No HTTP response received from the release server (curl exit code: ${curl_exit_code:-unknown}).${NC}" >&2
+    fi
+
+    case "$curl_exit_code" in
+        5|6)
+            echo -e "${YELLOW}→ DNS resolution failed. Check your network and DNS settings.${NC}" >&2
+            ;;
+        7)
+            echo -e "${YELLOW}→ Connection to the release host failed. Check firewall, proxy, or antivirus settings.${NC}" >&2
+            ;;
+        28)
+            echo -e "${YELLOW}→ Connection timed out. GitHub may be slow or blocked from this network.${NC}" >&2
+            ;;
+        35|51|58|60|77)
+            echo -e "${YELLOW}→ TLS/certificate validation failed while contacting GitHub Releases.${NC}" >&2
+            ;;
+        56)
+            echo -e "${YELLOW}→ The connection was interrupted mid-download. A proxy or TLS filter may be interfering.${NC}" >&2
+            ;;
+        92)
+            echo -e "${YELLOW}→ HTTP/2 transport failed. The installer retried with HTTP/1.1 compatibility mode.${NC}" >&2
+            ;;
+    esac
+
+    if echo "$curl_error" | grep -qi "resolve" && [ "$curl_exit_code" != "5" ] && [ "$curl_exit_code" != "6" ]; then
+        echo -e "${YELLOW}→ DNS resolution failed. Check your internet connection.${NC}" >&2
+    elif echo "$curl_error" | grep -qiE "ssl|certificate|tls|schannel|revoke|revocation" && [ "$curl_exit_code" != "35" ] && [ "$curl_exit_code" != "51" ] && [ "$curl_exit_code" != "58" ] && [ "$curl_exit_code" != "60" ] && [ "$curl_exit_code" != "77" ]; then
+        echo -e "${YELLOW}→ SSL/TLS validation failed. Update system certificates or trust your corporate CA.${NC}" >&2
+    elif echo "$curl_error" | grep -qi "timeout" && [ "$curl_exit_code" != "28" ]; then
+        echo -e "${YELLOW}→ Connection timed out. GitHub may be slow or blocked.${NC}" >&2
+    elif echo "$curl_error" | grep -qiE "refused|connect|proxy|407" && [ "$curl_exit_code" != "7" ] && [ "$curl_exit_code" != "56" ]; then
+        echo -e "${YELLOW}→ Connection was blocked before the download started. Check proxy and firewall settings.${NC}" >&2
+    fi
+
+    if [ "$PLATFORM" = "windows" ] && { [ "$http_code" = "000" ] || echo "$curl_error" | grep -qiE "schannel|ssl|tls|certificate|proxy|connect|407|revoke|revocation"; }; then
+        print_windows_proxy_hint
+    fi
 }
 
 # Acquire lock to prevent parallel installations
@@ -192,7 +324,7 @@ retry_download() {
         local success=false
 
         if command -v curl &>/dev/null; then
-            if curl -fsSL --max-time $CURL_TIMEOUT "$url" -o "$temp_file" 2>/dev/null; then
+            if curl -fsSL "${CURL_EXTRA_OPTS[@]}" --connect-timeout "$CONNECT_TIMEOUT" --max-time "$CURL_TIMEOUT" "$url" -o "$temp_file" 2>/dev/null; then
                 success=true
             fi
         elif command -v wget &>/dev/null; then
@@ -243,7 +375,7 @@ check_github_availability() {
     fi
 
     if command -v curl &> /dev/null; then
-        if ! curl -s --max-time 10 -I https://github.com &> /dev/null; then
+        if ! curl -s "${CURL_EXTRA_OPTS[@]}" --connect-timeout "$CONNECT_TIMEOUT" --max-time 10 -I https://github.com &> /dev/null; then
             # Network unavailable - check if we can use existing binary
             if [ -f "$BINARY_PATH" ]; then
                 echo -e "${YELLOW}⚠ Cannot reach GitHub, but existing binary found${NC}"
@@ -318,7 +450,7 @@ download_utility() {
     echo -e "${BLUE}📦 Downloading ${util_name}...${NC}"
 
     if command -v curl &> /dev/null; then
-        if curl -fsSL "$url" -o "$util_path" 2>/dev/null; then
+        if curl -fsSL "${CURL_EXTRA_OPTS[@]}" --connect-timeout "$CONNECT_TIMEOUT" --max-time "$CURL_TIMEOUT" "$url" -o "$util_path" 2>/dev/null; then
             if [ -f "$util_path" ] && [ "$(get_file_size "$util_path")" -gt 100000 ]; then
                 chmod +x "$util_path" 2>/dev/null || true
                 echo -e "${GREEN}✓${NC} ${util_name} downloaded"
@@ -398,7 +530,7 @@ download_checksums() {
     echo -e "${BLUE}📝 Downloading checksums...${NC}"
 
     if command -v curl &> /dev/null; then
-        if curl -fsSL "$CHECKSUMS_URL" -o "$CHECKSUMS_PATH" 2>/dev/null; then
+        if curl -fsSL "${CURL_EXTRA_OPTS[@]}" --connect-timeout "$CONNECT_TIMEOUT" --max-time "$CURL_TIMEOUT" "$CHECKSUMS_URL" -o "$CHECKSUMS_PATH" 2>/dev/null; then
             return 0
         fi
     elif command -v wget &> /dev/null; then
@@ -416,6 +548,10 @@ download_checksums() {
 download_binary() {
     local url="${RELEASE_URL}/${BINARY_NAME}"
     local error_log="${TMPDIR:-${TEMP:-/tmp}}/install-error-$$.log"
+    local http_code=""
+    local curl_exit_code=0
+    local curl_error=""
+    local should_retry=false
 
     echo -e "${BLUE}📦 Downloading ${BOLD}${BINARY_NAME}${NC}${BLUE}...${NC}"
     echo -e "${BLUE}   From: ${url}${NC}"
@@ -423,10 +559,9 @@ download_binary() {
 
     # Try curl first (with progress bar)
     if command -v curl &> /dev/null; then
-        # Download with detailed error capture
-        local http_code
-        http_code=$(curl -w "%{http_code}" -fL --progress-bar --max-time $CURL_TIMEOUT \
-            "$url" -o "$BINARY_PATH" 2>"$error_log") || true
+        # Use a progress bar only for the first attempt; retry failures with clean stderr.
+        http_code=$(curl -w "%{http_code}" -fL "${CURL_EXTRA_OPTS[@]}" --connect-timeout "$CONNECT_TIMEOUT" --progress-bar --max-time "$CURL_TIMEOUT" \
+            "$url" -o "$BINARY_PATH" 2>"$error_log") || curl_exit_code=$?
 
         if [ -f "$BINARY_PATH" ] && [ "$(get_file_size "$BINARY_PATH")" -gt 100000 ]; then
             rm -f "$error_log"
@@ -436,7 +571,40 @@ download_binary() {
 
         # Analyze failure
         rm -f "$BINARY_PATH"
-        local curl_error=$(cat "$error_log" 2>/dev/null)
+        if [ -f "$error_log" ]; then
+            curl_error=$(<"$error_log")
+        fi
+
+        case "$curl_exit_code" in
+            5|6|7|28|35|52|56|60|77|92)
+                should_retry=true
+                ;;
+        esac
+
+        if [ "$http_code" = "000" ] || [ -z "$curl_error" ]; then
+            should_retry=true
+        fi
+
+        if [ "$should_retry" = true ]; then
+            echo -e "${YELLOW}  Retrying once with compatibility mode...${NC}"
+            rm -f "$error_log" "$BINARY_PATH"
+
+            curl_exit_code=0
+            http_code=$(curl -w "%{http_code}" -fL "${CURL_EXTRA_OPTS[@]}" "${CURL_COMPAT_OPTS[@]}" --connect-timeout "$CONNECT_TIMEOUT" -sS --max-time "$CURL_TIMEOUT" \
+                "$url" -o "$BINARY_PATH" 2>"$error_log") || curl_exit_code=$?
+
+            if [ -f "$BINARY_PATH" ] && [ "$(get_file_size "$BINARY_PATH")" -gt 100000 ]; then
+                rm -f "$error_log"
+                echo ""
+                return 0
+            fi
+
+            rm -f "$BINARY_PATH"
+            if [ -f "$error_log" ]; then
+                curl_error=$(<"$error_log")
+            fi
+        fi
+
         rm -f "$error_log"
 
         echo ""
@@ -448,23 +616,26 @@ download_binary() {
             echo -e "  https://github.com/${REPO}/actions" >&2
             echo ""
             echo -e "${YELLOW}Wait a few minutes and try again.${NC}" >&2
+        elif [ "$http_code" = "407" ]; then
+            echo -e "${RED}✗ Proxy authentication required (407)${NC}" >&2
+            print_windows_proxy_hint
+        elif [ "$http_code" = "000" ] || [ -z "$http_code" ]; then
+            echo -e "${RED}✗ Download failed before an HTTP response was received${NC}" >&2
+            echo -e "${YELLOW}Error details:${NC}" >&2
+            if ! print_download_error_details "$curl_error"; then
+                echo -e "${YELLOW}(curl did not return any stderr output)${NC}" >&2
+            fi
+            print_curl_failure_guidance "$http_code" "$curl_exit_code" "$curl_error"
         elif echo "$http_code" | grep -qE "^5[0-9]{2}"; then
             echo -e "${RED}✗ GitHub server error (${http_code})${NC}" >&2
             echo -e "${YELLOW}GitHub may be experiencing issues. Try again later.${NC}" >&2
         elif [ -n "$curl_error" ]; then
             echo -e "${RED}✗ Download failed${NC}" >&2
             echo -e "${YELLOW}Error details:${NC}" >&2
-            # Show relevant error info (filter out progress bar noise)
-            echo "$curl_error" | grep -iE "error|fail|refused|timeout|resolve|ssl|certificate|connect" | head -3 >&2
-            if echo "$curl_error" | grep -qi "resolve"; then
-                echo -e "${YELLOW}→ DNS resolution failed. Check your internet connection.${NC}" >&2
-            elif echo "$curl_error" | grep -qiE "ssl|certificate"; then
-                echo -e "${YELLOW}→ SSL/TLS error. Your system certificates may be outdated.${NC}" >&2
-            elif echo "$curl_error" | grep -qi "timeout"; then
-                echo -e "${YELLOW}→ Connection timed out. GitHub may be slow or blocked.${NC}" >&2
-            elif echo "$curl_error" | grep -qi "refused"; then
-                echo -e "${YELLOW}→ Connection refused. Check firewall/proxy settings.${NC}" >&2
+            if ! print_download_error_details "$curl_error"; then
+                echo -e "${YELLOW}(curl did not return any stderr output)${NC}" >&2
             fi
+            print_curl_failure_guidance "$http_code" "$curl_exit_code" "$curl_error"
         else
             echo -e "${RED}✗ Download failed (HTTP ${http_code})${NC}" >&2
             echo -e "${YELLOW}Check your internet connection and try again.${NC}" >&2
@@ -489,7 +660,9 @@ download_binary() {
         echo -e "${RED}✗ Download failed${NC}" >&2
         if [ -n "$wget_error" ]; then
             echo -e "${YELLOW}Error details:${NC}" >&2
-            echo "$wget_error" | grep -iE "error|fail|refused|timeout|resolve|ssl|certificate|404|500" | head -3 >&2
+            if ! print_download_error_details "$wget_error"; then
+                echo -e "${YELLOW}(wget did not return any stderr output)${NC}" >&2
+            fi
         fi
         return 1
 
@@ -691,7 +864,7 @@ download_terminal_notifier_modern() {
         fi
 
         if command -v curl &>/dev/null; then
-            if curl -fsSL --max-time $CURL_TIMEOUT "$MODERN_URL" -o "$TEMP_ZIP" 2>/dev/null; then
+            if curl -fsSL "${CURL_EXTRA_OPTS[@]}" --connect-timeout "$CONNECT_TIMEOUT" --max-time "$CURL_TIMEOUT" "$MODERN_URL" -o "$TEMP_ZIP" 2>/dev/null; then
                 downloaded=true
                 break
             fi
@@ -774,7 +947,7 @@ download_terminal_notifier() {
         fi
 
         if command -v curl &>/dev/null; then
-            if curl -fsSL --max-time $CURL_TIMEOUT "$NOTIFIER_URL" -o "$TEMP_ZIP" 2>/dev/null; then
+            if curl -fsSL "${CURL_EXTRA_OPTS[@]}" --connect-timeout "$CONNECT_TIMEOUT" --max-time "$CURL_TIMEOUT" "$NOTIFIER_URL" -o "$TEMP_ZIP" 2>/dev/null; then
                 downloaded=true
                 break
             fi
@@ -1010,7 +1183,7 @@ install_gnome_activate_window_extension() {
         fi
 
         if command -v curl &>/dev/null; then
-            ext_info=$(curl -sf --max-time $CURL_TIMEOUT \
+            ext_info=$(curl -sf "${CURL_EXTRA_OPTS[@]}" --connect-timeout "$CONNECT_TIMEOUT" --max-time "$CURL_TIMEOUT" \
                 "https://extensions.gnome.org/extension-info/?pk=${EXTENSION_ID}&shell_version=${gnome_version}" 2>/dev/null) && break
         elif command -v wget &>/dev/null; then
             ext_info=$(wget -q --timeout=$WGET_TIMEOUT -O - \
@@ -1049,7 +1222,7 @@ install_gnome_activate_window_extension() {
         fi
 
         if command -v curl &>/dev/null; then
-            if curl -fsSL --max-time $CURL_TIMEOUT "https://extensions.gnome.org${download_url}" -o "$temp_zip" 2>/dev/null; then
+            if curl -fsSL "${CURL_EXTRA_OPTS[@]}" --connect-timeout "$CONNECT_TIMEOUT" --max-time "$CURL_TIMEOUT" "https://extensions.gnome.org${download_url}" -o "$temp_zip" 2>/dev/null; then
                 downloaded=true
                 break
             fi
@@ -1207,6 +1380,9 @@ main() {
         echo -e "  1. Wait a few minutes if release is building"
         echo -e "  2. Check: https://github.com/${REPO}/releases"
         echo -e "  3. Manual download: https://github.com/${REPO}/releases/latest"
+        if [ "$PLATFORM" = "windows" ]; then
+            echo -e "  4. Check proxy / TLS inspection settings in Git Bash or your corporate network"
+        fi
         echo ""
         exit 1
     fi

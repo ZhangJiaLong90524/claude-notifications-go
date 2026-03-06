@@ -546,6 +546,32 @@ test_directory_auto_created() {
     cleanup_test_dir
 }
 
+test_transport_error_diagnostics() {
+    echo -e "\n${CYAN}▶ test_transport_error_diagnostics${NC}"
+
+    if ! command -v curl &>/dev/null; then
+        skip_test "Transport error diagnostics" "curl not available"
+        return
+    fi
+
+    setup_test_dir
+
+    set +e
+    output=$(RELEASE_URL="http://127.0.0.1:1" \
+             CHECKSUMS_URL="http://127.0.0.1:1/checksums.txt" \
+             INSTALL_TARGET_DIR="$TEST_DIR" \
+             SKIP_CONNECTIVITY_CHECK=true \
+             run_with_timeout 15 bash "$INSTALL_SCRIPT" 2>&1)
+    exit_code=$?
+    set -e
+
+    assert_contains "$output" "Download failed before an HTTP response was received|No HTTP response received from the release server" "Transport failure summary shown"
+    assert_contains "$output" "Retrying once with compatibility mode|Connection to the release host failed|TLS/certificate validation failed|Windows/Git Bash downloads can fail behind corporate proxies" "Transport guidance shown"
+    assert_exit_code 1 $exit_code "Exit code is 1 on transport failure"
+
+    cleanup_test_dir
+}
+
 test_required_tools_curl_wget() {
     echo -e "\n${CYAN}▶ test_required_tools_curl_wget${NC}"
 
@@ -1574,6 +1600,7 @@ main() {
         test_no_write_permission
         test_install_target_dir
         test_directory_auto_created
+        test_transport_error_diagnostics
         test_required_tools_curl_wget
         test_force_removes_binaries
         test_force_removes_symlinks

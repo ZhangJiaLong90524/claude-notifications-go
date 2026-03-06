@@ -121,7 +121,7 @@ func GetTerminalNotifierPath() (string, error) {
 		return path, nil
 	}
 
-	return "", fmt.Errorf("terminal-notifier not found: run /claude-notifications-go:notifications-init to install")
+	return "", fmt.Errorf("terminal-notifier not found: run /claude-notifications-go:init to install")
 }
 
 // IsTerminalNotifierAvailable checks if terminal-notifier is available

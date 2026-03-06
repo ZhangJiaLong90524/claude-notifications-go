@@ -17,7 +17,7 @@
       "headers": {}
     },
     "suppressQuestionAfterTaskCompleteSeconds": 12,
-    "suppressQuestionAfterAnyNotificationSeconds": 0,
+    "suppressQuestionAfterAnyNotificationSeconds": 7,
     "suppressForSubagents": true,
     "suppressFilters": []
   },
