@@ -216,6 +216,28 @@ func TestTmuxE2E(t *testing.T) {
 		}
 	})
 
+	t.Run("fallback_without_tmux_pane_uses_current_socket", func(t *testing.T) {
+		oldPane := os.Getenv("TMUX_PANE")
+		os.Unsetenv("TMUX_PANE")
+		t.Cleanup(func() {
+			if oldPane != "" {
+				os.Setenv("TMUX_PANE", oldPane)
+			} else {
+				os.Unsetenv("TMUX_PANE")
+			}
+		})
+
+		mustRunTmux(t, tmuxPath, socketPath, "select-window", "-t", sessionName+":logs")
+
+		target, err := GetTmuxPaneTarget()
+		if err != nil {
+			t.Fatalf("GetTmuxPaneTarget fallback failed: %v", err)
+		}
+		if target != logsPaneID {
+			t.Errorf("fallback target = %q, want %q", target, logsPaneID)
+		}
+	})
+
 	t.Run("control_mode_false_for_normal_client", func(t *testing.T) {
 		// A normal (non -CC) tmux client should not report control mode
 		if IsTmuxControlMode() {

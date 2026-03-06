@@ -47,8 +47,18 @@ func GetTmuxPaneTarget() (string, error) {
 		return pane, nil
 	}
 
-	// Fallback for environments where TMUX_PANE is not available.
-	cmd := exec.Command("tmux", "display-message", "-p", "#{pane_id}")
+	// Best-effort fallback for environments where TMUX_PANE is not available.
+	// Use the resolved tmux binary and explicit socket so this still works when
+	// the notifier runs outside the user's shell PATH.
+	tmuxPath := getTmuxPath()
+	socketPath := getTmuxSocketPath()
+
+	var cmd *exec.Cmd
+	if socketPath != "" {
+		cmd = exec.Command(tmuxPath, "-S", socketPath, "display-message", "-p", "#{pane_id}")
+	} else {
+		cmd = exec.Command(tmuxPath, "display-message", "-p", "#{pane_id}")
+	}
 	output, err := cmd.Output()
 	if err != nil {
 		return "", fmt.Errorf("failed to get tmux pane target: %w", err)
@@ -56,6 +66,9 @@ func GetTmuxPaneTarget() (string, error) {
 	target := strings.TrimSpace(string(output))
 	if target == "" {
 		return "", fmt.Errorf("empty tmux pane target")
+	}
+	if !strings.HasPrefix(target, "%") {
+		return "", fmt.Errorf("invalid tmux pane target: %q", target)
 	}
 	return target, nil
 }
