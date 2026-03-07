@@ -180,8 +180,24 @@ sync_marketplace_checkout() {
     local after_version=""
     before_version=$(get_manifest_version "$MARKETPLACE_PLUGIN_JSON")
 
-    if git -C "$MARKETPLACE_DIR" fetch --depth=1 origin main >/dev/null 2>&1 && \
-       git -C "$MARKETPLACE_DIR" checkout -q main >/dev/null 2>&1 && \
+    local is_shallow="false"
+    is_shallow=$(git -C "$MARKETPLACE_DIR" rev-parse --is-shallow-repository 2>/dev/null || echo "false")
+
+    if [ "$is_shallow" = "true" ]; then
+        if git -C "$MARKETPLACE_DIR" fetch --unshallow origin main >/dev/null 2>&1; then
+            :
+        elif git -C "$MARKETPLACE_DIR" fetch --deepen=50 origin main >/dev/null 2>&1; then
+            :
+        elif ! git -C "$MARKETPLACE_DIR" fetch origin main >/dev/null 2>&1; then
+            echo -e "${YELLOW}  Could not refresh shallow marketplace checkout; keeping existing checkout${NC}"
+            return 0
+        fi
+    elif ! git -C "$MARKETPLACE_DIR" fetch origin main >/dev/null 2>&1; then
+        echo -e "${YELLOW}  Could not fetch marketplace checkout; keeping existing checkout${NC}"
+        return 0
+    fi
+
+    if git -C "$MARKETPLACE_DIR" checkout -q main >/dev/null 2>&1 && \
        git -C "$MARKETPLACE_DIR" merge --ff-only FETCH_HEAD >/dev/null 2>&1; then
         after_version=$(get_manifest_version "$MARKETPLACE_PLUGIN_JSON")
         if [ -n "$after_version" ] && [ "$after_version" != "$before_version" ]; then
@@ -194,7 +210,22 @@ sync_marketplace_checkout() {
         return 0
     fi
 
-    echo -e "${YELLOW}  Direct git sync failed, keeping existing checkout${NC}"
+    local current_head=""
+    local fetched_head=""
+    current_head=$(git -C "$MARKETPLACE_DIR" rev-parse --short HEAD 2>/dev/null || true)
+    fetched_head=$(git -C "$MARKETPLACE_DIR" rev-parse --short FETCH_HEAD 2>/dev/null || true)
+
+    if [ -n "$current_head" ] && [ "$current_head" = "$fetched_head" ]; then
+        after_version=$(get_manifest_version "$MARKETPLACE_PLUGIN_JSON")
+        if [ -n "$after_version" ]; then
+            echo -e "${GREEN}✓${NC} Marketplace checkout already at v${after_version}"
+        else
+            echo -e "${GREEN}✓${NC} Marketplace checkout already current"
+        fi
+        return 0
+    fi
+
+    echo -e "${YELLOW}  Marketplace checkout fetch succeeded but fast-forward merge failed; keeping existing checkout${NC}"
     return 0
 }
 
