@@ -14,6 +14,7 @@ NC='\033[0m'
 
 # Constants
 REPO="777genius/claude-notifications-go"
+MARKETPLACE_SOURCE="${BOOTSTRAP_MARKETPLACE_SOURCE:-$REPO}"
 MARKETPLACE_NAME="claude-notifications-go"
 PLUGIN_NAME="claude-notifications-go"
 PLUGIN_KEY="${PLUGIN_NAME}@${MARKETPLACE_NAME}"
@@ -27,6 +28,8 @@ if [ -z "$CLAUDE_HOME" ]; then
 fi
 INSTALLED_JSON="${CLAUDE_HOME}/plugins/installed_plugins.json"
 CACHE_DIR="${CLAUDE_HOME}/plugins/cache/${MARKETPLACE_NAME}"
+MARKETPLACE_DIR="${CLAUDE_HOME}/plugins/marketplaces/${MARKETPLACE_NAME}"
+MARKETPLACE_PLUGIN_JSON="${MARKETPLACE_DIR}/.claude-plugin/plugin.json"
 
 # State
 PLUGIN_ROOT=""
@@ -86,7 +89,7 @@ setup_marketplace() {
     local output
     # Try adding marketplace — if already added, update instead
     # </dev/null prevents stdin conflicts when running via `curl | bash`
-    if output=$(claude plugin marketplace add "$REPO" </dev/null 2>&1); then
+    if output=$(claude plugin marketplace add "$MARKETPLACE_SOURCE" </dev/null 2>&1); then
         echo -e "${GREEN}✓${NC} Marketplace added"
     else
         if echo "$output" | grep -qi "already"; then
@@ -101,6 +104,115 @@ setup_marketplace() {
             echo -e "${YELLOW}⚠ Marketplace add output: ${output}${NC}"
             echo -e "${YELLOW}  Continuing anyway...${NC}"
         fi
+    fi
+}
+
+# ──────────────────────────────────────────────
+
+get_manifest_version() {
+    local manifest_path="$1"
+    [ -f "$manifest_path" ] || return 0
+    grep -Eo '"version"[[:space:]]*:[[:space:]]*"[0-9]+\.[0-9]+\.[0-9]+"' "$manifest_path" 2>/dev/null \
+        | head -n 1 \
+        | grep -Eo '[0-9]+\.[0-9]+\.[0-9]+' || true
+}
+
+get_installed_plugin_version() {
+    [ -f "$INSTALLED_JSON" ] || return 0
+
+    if command -v jq &>/dev/null; then
+        jq -r ".plugins[\"${PLUGIN_KEY}\"][0].version // empty" "$INSTALLED_JSON" 2>/dev/null || true
+        return 0
+    fi
+
+    if command -v python3 &>/dev/null; then
+        python3 - "$INSTALLED_JSON" "$PLUGIN_KEY" <<'PYEOF' 2>/dev/null || true
+import json, sys
+try:
+    with open(sys.argv[1]) as f:
+        d = json.load(f)
+    entries = d.get('plugins', {}).get(sys.argv[2], [])
+    if entries:
+        print(entries[0].get('version', '') or '')
+except Exception:
+    pass
+PYEOF
+        return 0
+    fi
+
+    grep -A6 "\"${PLUGIN_KEY}\"" "$INSTALLED_JSON" 2>/dev/null \
+        | grep -Eo '"version"[[:space:]]*:[[:space:]]*"[0-9]+\.[0-9]+\.[0-9]+"' \
+        | head -n 1 \
+        | grep -Eo '[0-9]+\.[0-9]+\.[0-9]+' || true
+}
+
+sync_marketplace_checkout() {
+    echo ""
+    echo -e "${BLUE}🔄 Syncing marketplace checkout...${NC}"
+
+    if [ "$MARKETPLACE_SOURCE" != "$REPO" ]; then
+        echo -e "${BLUE}  Using custom marketplace source; skipping direct git sync${NC}"
+        return 0
+    fi
+
+    if [ ! -d "$MARKETPLACE_DIR/.git" ]; then
+        echo -e "${YELLOW}  Marketplace checkout not found yet; continuing${NC}"
+        return 0
+    fi
+
+    if ! command -v git &>/dev/null; then
+        echo -e "${YELLOW}  git not found; skipping marketplace checkout sync${NC}"
+        return 0
+    fi
+
+    local remote_url=""
+    remote_url=$(git -C "$MARKETPLACE_DIR" remote get-url origin 2>/dev/null || true)
+    case "$remote_url" in
+        *"${REPO}"*)
+            ;;
+        *)
+            echo -e "${YELLOW}  Marketplace remote does not match ${REPO}; skipping direct sync${NC}"
+            return 0
+            ;;
+    esac
+
+    local before_version=""
+    local after_version=""
+    before_version=$(get_manifest_version "$MARKETPLACE_PLUGIN_JSON")
+
+    if git -C "$MARKETPLACE_DIR" fetch --depth=1 origin main >/dev/null 2>&1 && \
+       git -C "$MARKETPLACE_DIR" checkout -q main >/dev/null 2>&1 && \
+       git -C "$MARKETPLACE_DIR" merge --ff-only FETCH_HEAD >/dev/null 2>&1; then
+        after_version=$(get_manifest_version "$MARKETPLACE_PLUGIN_JSON")
+        if [ -n "$after_version" ] && [ "$after_version" != "$before_version" ]; then
+            echo -e "${GREEN}✓${NC} Marketplace checkout updated to v${after_version}"
+        elif [ -n "$after_version" ]; then
+            echo -e "${GREEN}✓${NC} Marketplace checkout already at v${after_version}"
+        else
+            echo -e "${GREEN}✓${NC} Marketplace checkout synced"
+        fi
+        return 0
+    fi
+
+    echo -e "${YELLOW}  Direct git sync failed, keeping existing checkout${NC}"
+    return 0
+}
+
+verify_installed_plugin_version() {
+    local expected_version="$1"
+    [ -n "$expected_version" ] || return 0
+
+    local installed_version=""
+    installed_version=$(get_installed_plugin_version)
+    [ "$installed_version" = "$expected_version" ]
+}
+
+# ──────────────────────────────────────────────
+
+clear_plugin_cache() {
+    if [ -n "$CACHE_DIR" ] && [ "$CACHE_DIR" != "/" ] && [ -d "$CACHE_DIR" ]; then
+        echo -e "${BLUE}  Clearing plugin cache...${NC}"
+        rm -rf "$CACHE_DIR" 2>/dev/null || true
     fi
 }
 
@@ -158,23 +270,57 @@ install_plugin() {
         fi
     fi
 
-    # Clear plugin cache to work around update bug (#19197)
-    if [ -n "$CACHE_DIR" ] && [ "$CACHE_DIR" != "/" ] && [ -d "$CACHE_DIR" ]; then
-        echo -e "${BLUE}  Clearing plugin cache...${NC}"
-        rm -rf "$CACHE_DIR" 2>/dev/null || true
-    fi
+    local expected_version=""
+    expected_version=$(get_manifest_version "$MARKETPLACE_PLUGIN_JSON")
+
+    local installed_before=""
+    installed_before=$(get_installed_plugin_version)
 
     local output
-    if output=$(claude plugin install "$PLUGIN_KEY" </dev/null 2>&1); then
-        echo -e "${GREEN}✓${NC} Plugin installed"
-    else
-        if echo "$output" | grep -qi "already installed"; then
-            echo -e "${GREEN}✓${NC} Plugin already installed"
+    if [ -n "$installed_before" ]; then
+        if output=$(claude plugin update "$PLUGIN_KEY" </dev/null 2>&1); then
+            echo -e "${GREEN}✓${NC} Plugin updated"
         else
-            echo -e "${RED}✗ Plugin install failed${NC}" >&2
+            echo -e "${YELLOW}  Plugin update failed, will attempt recovery reinstall${NC}"
+            echo -e "${YELLOW}  Output: ${output}${NC}"
+        fi
+    else
+        clear_plugin_cache
+        if output=$(claude plugin install "$PLUGIN_KEY" </dev/null 2>&1); then
+            echo -e "${GREEN}✓${NC} Plugin installed"
+        else
+            if echo "$output" | grep -qi "already installed"; then
+                echo -e "${GREEN}✓${NC} Plugin already installed"
+            else
+                echo -e "${RED}✗ Plugin install failed${NC}" >&2
+                echo -e "${YELLOW}Output: ${output}${NC}" >&2
+                exit 1
+            fi
+        fi
+    fi
+
+    if [ -n "$expected_version" ] && ! verify_installed_plugin_version "$expected_version"; then
+        echo -e "${YELLOW}  Installed plugin version does not match marketplace v${expected_version}; reinstalling...${NC}"
+
+        claude plugin uninstall "$PLUGIN_KEY" </dev/null >/dev/null 2>&1 || true
+        clear_plugin_cache
+
+        if output=$(claude plugin install "$PLUGIN_KEY" </dev/null 2>&1); then
+            echo -e "${GREEN}✓${NC} Plugin reinstalled"
+        else
+            echo -e "${RED}✗ Plugin reinstall failed${NC}" >&2
             echo -e "${YELLOW}Output: ${output}${NC}" >&2
             exit 1
         fi
+    fi
+
+    if [ -n "$expected_version" ] && ! verify_installed_plugin_version "$expected_version"; then
+        local installed_after=""
+        installed_after=$(get_installed_plugin_version)
+        echo -e "${RED}✗ Plugin version mismatch after install/update${NC}" >&2
+        echo -e "${YELLOW}Expected: v${expected_version}${NC}" >&2
+        echo -e "${YELLOW}Installed: v${installed_after:-unknown}${NC}" >&2
+        exit 1
     fi
 
     # Create shim dirs for old version paths so running Claude Code instances
@@ -492,6 +638,7 @@ main() {
     check_prerequisites
     detect_platform
     setup_marketplace
+    sync_marketplace_checkout
     install_plugin
     find_plugin_root
     download_binary
