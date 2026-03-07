@@ -21,9 +21,10 @@ import (
 
 // focusInfo holds the focus target and folder for a notification.
 type focusInfo struct {
-	target   string
-	folder   string
-	windowID string
+	target      string
+	folder      string
+	windowID    string
+	windowTitle string
 }
 
 // Server is the notification daemon server
@@ -279,14 +280,15 @@ func (s *Server) handleNotification(req *NotifyRequest) (*NotifyResponse, error)
 	// Store focus context
 	s.focusCtxMu.Lock()
 	s.focusCtx[id] = focusInfo{
-		target:   focusTarget,
-		folder:   req.FocusFolder,
-		windowID: req.FocusWindowID,
+		target:      focusTarget,
+		folder:      req.FocusFolder,
+		windowID:    req.FocusWindowID,
+		windowTitle: req.FocusWindowTitle,
 	}
 	s.focusCtxMu.Unlock()
 
-	log.Printf("[INFO] Notification sent: ID=%d, focus_target=%s, focus_folder=%s, focus_window_id=%s",
-		id, focusTarget, req.FocusFolder, req.FocusWindowID)
+	log.Printf("[INFO] Notification sent: ID=%d, focus_target=%s, focus_folder=%s, focus_window_id=%s, focus_window_title=%q",
+		id, focusTarget, req.FocusFolder, req.FocusWindowID, req.FocusWindowTitle)
 
 	return &NotifyResponse{
 		Success:        true,
@@ -309,6 +311,7 @@ func (s *Server) onActionInvoked(sig *notify.ActionInvokedSignal) {
 	focusTarget := info.target
 	focusFolder := info.folder
 	focusWindowID := info.windowID
+	focusWindowTitle := info.windowTitle
 
 	if !exists {
 		log.Printf("[WARN] No focus context for notification %d", sig.ID)
@@ -316,8 +319,9 @@ func (s *Server) onActionInvoked(sig *notify.ActionInvokedSignal) {
 	}
 
 	// Attempt to focus
-	log.Printf("[INFO] Attempting to focus: %s (folder: %s, window_id: %s)", focusTarget, focusFolder, focusWindowID)
-	if err := TryFocusWithWindowID(focusTarget, focusFolder, focusWindowID); err != nil {
+	log.Printf("[INFO] Attempting to focus: %s (folder: %s, window_id: %s, window_title: %q)",
+		focusTarget, focusFolder, focusWindowID, focusWindowTitle)
+	if err := TryFocusWithHints(focusTarget, focusFolder, focusWindowID, focusWindowTitle); err != nil {
 		log.Printf("[ERROR] Focus failed: %v", err)
 	} else {
 		log.Printf("[INFO] Focus succeeded")

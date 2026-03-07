@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"os"
+	"os/exec"
 	"strings"
 )
 
@@ -173,4 +174,33 @@ func GetTerminalName() string {
 // It is captured in the hook process and later used by the daemon for exact focus on X11.
 func GetX11WindowID() string {
 	return strings.TrimSpace(os.Getenv("WINDOWID"))
+}
+
+// GetExactWindowTitle returns an exact top-level window title for terminals that expose
+// a reliable per-terminal identifier. Currently Terminator can provide this via
+// TERMINATOR_UUID + remotinator.
+func GetExactWindowTitle(terminalName string) string {
+	switch strings.ToLower(terminalName) {
+	case "terminator":
+		return getTerminatorWindowTitle()
+	default:
+		return ""
+	}
+}
+
+func getTerminatorWindowTitle() string {
+	if os.Getenv("TERMINATOR_UUID") == "" {
+		return ""
+	}
+	if _, err := exec.LookPath("remotinator"); err != nil {
+		return ""
+	}
+
+	cmd := exec.Command("remotinator", "get_window_title")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return ""
+	}
+
+	return strings.TrimSpace(string(output))
 }

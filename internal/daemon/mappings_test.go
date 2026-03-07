@@ -499,6 +499,15 @@ func TestGetX11WindowID_TrimsWhitespace(t *testing.T) {
 	}
 }
 
+func TestGetExactWindowTitle_UnknownTerminal(t *testing.T) {
+	restore := saveTerminalEnv(t)
+	defer restore()
+
+	if got := GetExactWindowTitle("kitty"); got != "" {
+		t.Errorf("GetExactWindowTitle(unknown) = %q, want empty string", got)
+	}
+}
+
 // --- Cross-mapping consistency tests ---
 
 func TestMappingConsistency_AllFunctionsHandleVSCode(t *testing.T) {

@@ -88,11 +88,12 @@ func sendViaDaemon(title, body, cwd string) error {
 	// have been started from a different environment.
 	focusTarget := daemon.GetTerminalName()
 	focusWindowID := daemon.GetX11WindowID()
+	focusWindowTitle := daemon.GetExactWindowTitle(focusTarget)
 	if sessionType := os.Getenv("XDG_SESSION_TYPE"); sessionType != "" && sessionType != "x11" {
 		focusWindowID = ""
 	}
 
-	_, err = client.SendNotification(title, body, focusTarget, folderName, focusWindowID, 30)
+	_, err = client.SendNotification(title, body, focusTarget, folderName, focusWindowID, focusWindowTitle, 30)
 	return err
 }
 

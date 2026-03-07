@@ -7,6 +7,7 @@ package daemon
 import (
 	"fmt"
 	"os/exec"
+	"regexp"
 	"strconv"
 	"strings"
 )
@@ -34,18 +35,32 @@ func GetFocusMethods() []FocusMethod {
 // folderName is the project folder name used for title-based window search (may be empty).
 // It tries each method in order until one succeeds.
 func TryFocus(terminalName, folderName string) error {
-	return TryFocusWithWindowID(terminalName, folderName, "")
+	return TryFocusWithHints(terminalName, folderName, "", "")
 }
 
-// TryFocusWithWindowID attempts exact X11 window focus first when an exact window ID
-// was captured in the hook process, then falls back to compositor-specific methods.
+// TryFocusWithWindowID preserves the previous API for callers that only have an exact X11 window ID.
 func TryFocusWithWindowID(terminalName, folderName, windowID string) error {
+	return TryFocusWithHints(terminalName, folderName, windowID, "")
+}
+
+// TryFocusWithHints attempts exact focus using hook-time hints first, then falls back to
+// compositor-specific methods.
+func TryFocusWithHints(terminalName, folderName, windowID, windowTitle string) error {
 	var exactErr error
 	if strings.TrimSpace(windowID) != "" {
 		if err := tryX11WindowID(windowID); err == nil {
 			return nil
 		} else {
 			exactErr = err
+		}
+	}
+	if strings.TrimSpace(windowTitle) != "" {
+		if err := tryWindowTitle(windowTitle); err == nil {
+			return nil
+		} else if exactErr != nil {
+			exactErr = fmt.Errorf("%v; exact title focus failed: %v", exactErr, err)
+		} else {
+			exactErr = fmt.Errorf("exact title focus failed: %v", err)
 		}
 	}
 
@@ -130,6 +145,67 @@ func normalizeX11WindowID(windowID string) (string, error) {
 	}
 
 	return strconv.FormatUint(id, 10), nil
+}
+
+func tryWindowTitle(windowTitle string) error {
+	windowTitle = strings.TrimSpace(windowTitle)
+	if windowTitle == "" {
+		return fmt.Errorf("empty window title")
+	}
+
+	var errs []string
+
+	if err := activateWindowTitleWithWmctrl(windowTitle); err == nil {
+		return nil
+	} else {
+		errs = append(errs, err.Error())
+	}
+
+	if err := activateWindowTitleWithXdotool(windowTitle); err == nil {
+		return nil
+	} else {
+		errs = append(errs, err.Error())
+	}
+
+	return fmt.Errorf("exact title focus failed: %s", strings.Join(errs, "; "))
+}
+
+func activateWindowTitleWithWmctrl(windowTitle string) error {
+	if _, err := exec.LookPath("wmctrl"); err != nil {
+		return fmt.Errorf("wmctrl not installed")
+	}
+
+	cmd := exec.Command("wmctrl", "-F", "-a", windowTitle)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("wmctrl -F -a failed: %w, output: %s", err, strings.TrimSpace(string(output)))
+	}
+
+	return nil
+}
+
+func activateWindowTitleWithXdotool(windowTitle string) error {
+	if _, err := exec.LookPath("xdotool"); err != nil {
+		return fmt.Errorf("xdotool not installed")
+	}
+
+	exactRegex := "^" + regexp.QuoteMeta(windowTitle) + "$"
+	windowIDs, err := runXdotoolSearch("search", "--name", exactRegex)
+	if err != nil {
+		return err
+	}
+	if len(windowIDs) == 0 {
+		return fmt.Errorf("no windows found for exact title")
+	}
+
+	for i := len(windowIDs) - 1; i >= 0; i-- {
+		windowID := windowIDs[i]
+		if err := activateWindowIDWithXdotool(windowID); err == nil {
+			return nil
+		}
+	}
+
+	return fmt.Errorf("xdotool could not activate any exact-title match")
 }
 
 // TryActivateWindowByTitle uses the activate-window-by-title GNOME extension.
@@ -335,6 +411,7 @@ func TryXdotool(terminalName, folderName string) error {
 		}
 
 		foundMatch = true
+		windowIDs = prioritizeXdotoolCandidates(windowIDs, search.label, folderName)
 
 		// xdotool returns bottom-most windows first; prefer the top-most candidate.
 		for i := len(windowIDs) - 1; i >= 0; i-- {
@@ -421,6 +498,41 @@ func splitWindowIDs(output string) []string {
 		ids = append(ids, line)
 	}
 	return ids
+}
+
+func prioritizeXdotoolCandidates(windowIDs []string, searchLabel, folderName string) []string {
+	if folderName == "" {
+		return windowIDs
+	}
+	if !strings.Contains(searchLabel, "class search") {
+		return windowIDs
+	}
+
+	matching := make([]string, 0, len(windowIDs))
+	nonMatching := make([]string, 0, len(windowIDs))
+	for _, windowID := range windowIDs {
+		title := getXdotoolWindowName(windowID)
+		if title != "" && strings.Contains(title, folderName) {
+			matching = append(matching, windowID)
+			continue
+		}
+		nonMatching = append(nonMatching, windowID)
+	}
+
+	if len(matching) == 0 {
+		return windowIDs
+	}
+
+	return append(matching, nonMatching...)
+}
+
+func getXdotoolWindowName(windowID string) string {
+	cmd := exec.Command("xdotool", "getwindowname", windowID)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(output))
 }
 
 // DetectFocusTools returns a map of available focus tools.

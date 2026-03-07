@@ -46,12 +46,13 @@ type Response struct {
 
 // NotifyRequest contains notification details sent to the daemon
 type NotifyRequest struct {
-	Title         string `json:"title"`
-	Body          string `json:"body"`
-	FocusTarget   string `json:"focus_target"`              // Terminal identifier (empty = auto-detect)
-	FocusFolder   string `json:"focus_folder,omitempty"`    // Project folder name for window-specific focus
-	FocusWindowID string `json:"focus_window_id,omitempty"` // Exact X11 window ID captured in the hook process
-	Timeout       int    `json:"timeout"`                   // Notification timeout in seconds
+	Title            string `json:"title"`
+	Body             string `json:"body"`
+	FocusTarget      string `json:"focus_target"`                 // Terminal identifier (empty = auto-detect)
+	FocusFolder      string `json:"focus_folder,omitempty"`       // Project folder name for window-specific focus
+	FocusWindowID    string `json:"focus_window_id,omitempty"`    // Exact X11 window ID captured in the hook process
+	FocusWindowTitle string `json:"focus_window_title,omitempty"` // Exact window title captured in the hook process when available
+	Timeout          int    `json:"timeout"`                      // Notification timeout in seconds
 }
 
 // NotifyResponse contains the result of a notification request
