@@ -121,29 +121,161 @@ get_installed_plugin_version() {
     [ -f "$INSTALLED_JSON" ] || return 0
 
     if command -v jq &>/dev/null; then
-        jq -r ".plugins[\"${PLUGIN_KEY}\"][0].version // empty" "$INSTALLED_JSON" 2>/dev/null || true
+        PLUGIN_KEY="$PLUGIN_KEY" jq -r '
+          (.plugins[env.PLUGIN_KEY] // []) as $entries
+          | ($entries | map(select((.installPath // "") != ""))) as $with_paths
+          | (if ($with_paths | length) == 0 then $entries else $with_paths end)
+          | sort_by((.version // "0.0.0") | split(".") | map(tonumber? // 0))
+          | if length == 0 then {} else .[-1] end
+          | .version // empty
+        ' "$INSTALLED_JSON" 2>/dev/null || true
         return 0
     fi
 
     if command -v python3 &>/dev/null; then
         python3 - "$INSTALLED_JSON" "$PLUGIN_KEY" <<'PYEOF' 2>/dev/null || true
 import json, sys
+def ver_tuple(value):
+    try:
+        parts = str(value or "0.0.0").split(".")
+        parts = (parts + ["0", "0", "0"])[:3]
+        return tuple(int(p) for p in parts)
+    except Exception:
+        return (0, 0, 0)
 try:
     with open(sys.argv[1]) as f:
         d = json.load(f)
     entries = d.get('plugins', {}).get(sys.argv[2], [])
     if entries:
-        print(entries[0].get('version', '') or '')
+        with_paths = [e for e in entries if isinstance(e, dict) and e.get('installPath')]
+        candidates = with_paths or [e for e in entries if isinstance(e, dict)]
+        if candidates:
+            best = max(candidates, key=lambda e: ver_tuple(e.get('version')))
+            print(best.get('version', '') or '')
 except Exception:
     pass
 PYEOF
         return 0
     fi
 
+    if command -v node &>/dev/null; then
+        PLUGIN_KEY="$PLUGIN_KEY" node - "$INSTALLED_JSON" <<'JSEOF' 2>/dev/null || true
+const fs = require('fs');
+function parseVersion(value) {
+  return String(value || '0.0.0')
+    .split('.')
+    .slice(0, 3)
+    .map((part) => {
+      const n = parseInt(part, 10);
+      return Number.isFinite(n) ? n : 0;
+    });
+}
+function compareVersions(a, b) {
+  const av = parseVersion(a && a.version);
+  const bv = parseVersion(b && b.version);
+  for (let i = 0; i < 3; i += 1) {
+    if (av[i] !== bv[i]) return av[i] - bv[i];
+  }
+  return 0;
+}
+try {
+  const installedPath = process.argv[2];
+  const pluginKey = process.env.PLUGIN_KEY;
+  const data = JSON.parse(fs.readFileSync(installedPath, 'utf8'));
+  const entries = ((data.plugins || {})[pluginKey] || []).filter((entry) => entry && typeof entry === 'object');
+  const candidates = entries.filter((entry) => entry.installPath) || entries;
+  const pool = candidates.length > 0 ? candidates : entries;
+  if (pool.length > 0) {
+    const best = pool.slice().sort(compareVersions).pop();
+    process.stdout.write(String((best && best.version) || ''));
+  }
+} catch (_) {}
+JSEOF
+        return 0
+    fi
+
     grep -A6 "\"${PLUGIN_KEY}\"" "$INSTALLED_JSON" 2>/dev/null \
         | grep -Eo '"version"[[:space:]]*:[[:space:]]*"[0-9]+\.[0-9]+\.[0-9]+"' \
-        | head -n 1 \
+        | tail -n 1 \
         | grep -Eo '[0-9]+\.[0-9]+\.[0-9]+' || true
+}
+
+get_installed_plugin_root() {
+    [ -f "$INSTALLED_JSON" ] || return 0
+
+    if command -v jq &>/dev/null; then
+        PLUGIN_KEY="$PLUGIN_KEY" jq -r '
+          (.plugins[env.PLUGIN_KEY] // [])
+          | map(select((.installPath // "") != ""))
+          | sort_by((.version // "0.0.0") | split(".") | map(tonumber? // 0))
+          | if length == 0 then {} else .[-1] end
+          | .installPath // empty
+        ' "$INSTALLED_JSON" 2>/dev/null || true
+        return 0
+    fi
+
+    if command -v python3 &>/dev/null; then
+        python3 - "$INSTALLED_JSON" "$PLUGIN_KEY" <<'PYEOF' 2>/dev/null || true
+import json, sys
+def ver_tuple(value):
+    try:
+        parts = str(value or "0.0.0").split(".")
+        parts = (parts + ["0", "0", "0"])[:3]
+        return tuple(int(p) for p in parts)
+    except Exception:
+        return (0, 0, 0)
+try:
+    with open(sys.argv[1]) as f:
+        d = json.load(f)
+    entries = d.get('plugins', {}).get(sys.argv[2], [])
+    candidates = [e for e in entries if isinstance(e, dict) and e.get('installPath')]
+    if candidates:
+        best = max(candidates, key=lambda e: ver_tuple(e.get('version')))
+        print(best.get('installPath', '') or '')
+except Exception:
+    pass
+PYEOF
+        return 0
+    fi
+
+    if command -v node &>/dev/null; then
+        PLUGIN_KEY="$PLUGIN_KEY" node - "$INSTALLED_JSON" <<'JSEOF' 2>/dev/null || true
+const fs = require('fs');
+function parseVersion(value) {
+  return String(value || '0.0.0')
+    .split('.')
+    .slice(0, 3)
+    .map((part) => {
+      const n = parseInt(part, 10);
+      return Number.isFinite(n) ? n : 0;
+    });
+}
+function compareVersions(a, b) {
+  const av = parseVersion(a && a.version);
+  const bv = parseVersion(b && b.version);
+  for (let i = 0; i < 3; i += 1) {
+    if (av[i] !== bv[i]) return av[i] - bv[i];
+  }
+  return 0;
+}
+try {
+  const installedPath = process.argv[2];
+  const pluginKey = process.env.PLUGIN_KEY;
+  const data = JSON.parse(fs.readFileSync(installedPath, 'utf8'));
+  const entries = ((data.plugins || {})[pluginKey] || [])
+    .filter((entry) => entry && typeof entry === 'object' && entry.installPath);
+  if (entries.length > 0) {
+    const best = entries.slice().sort(compareVersions).pop();
+    process.stdout.write(String((best && best.installPath) || ''));
+  }
+} catch (_) {}
+JSEOF
+        return 0
+    fi
+
+    grep -o '"installPath"[[:space:]]*:[[:space:]]*"[^"]*'"${MARKETPLACE_NAME}"'[^"]*"' "$INSTALLED_JSON" 2>/dev/null \
+        | tail -n 1 \
+        | sed 's/"installPath"[[:space:]]*:[[:space:]]*"//;s/"$//' || true
 }
 
 sync_marketplace_checkout() {
@@ -408,18 +540,32 @@ PLUGIN_ROOT=""
 if [ -f "$INSTALLED_JSON" ]; then
   # Prefer robust JSON parsing; fall back to grep/sed only if needed.
   if command -v jq >/dev/null 2>&1; then
-    PLUGIN_ROOT=$(jq -r ".plugins[\"${PLUGIN_KEY}\"][0].installPath // empty" "$INSTALLED_JSON" 2>/dev/null) || true
+    PLUGIN_ROOT=$(PLUGIN_KEY="$PLUGIN_KEY" jq -r '
+      (.plugins[env.PLUGIN_KEY] // [])
+      | map(select((.installPath // "") != ""))
+      | sort_by((.version // "0.0.0") | split(".") | map(tonumber? // 0))
+      | if length == 0 then {} else .[-1] end
+      | .installPath // empty
+    ' "$INSTALLED_JSON" 2>/dev/null) || true
   fi
 
   if [ -z "$PLUGIN_ROOT" ] && command -v python3 >/dev/null 2>&1; then
     PLUGIN_ROOT=$(python3 - "$INSTALLED_JSON" "$PLUGIN_KEY" <<'PYEOF' 2>/dev/null || true
 import json, sys
+def ver_tuple(value):
+    try:
+        parts = str(value or "0.0.0").split(".")
+        parts = (parts + ["0", "0", "0"])[:3]
+        return tuple(int(p) for p in parts)
+    except Exception:
+        return (0, 0, 0)
 try:
     with open(sys.argv[1]) as f:
         d = json.load(f)
-    entries = d.get('plugins', {}).get(sys.argv[2], [])
+    entries = [e for e in d.get('plugins', {}).get(sys.argv[2], []) if isinstance(e, dict) and e.get('installPath')]
     if entries:
-        print(entries[0].get('installPath', '') or '')
+        best = max(entries, key=lambda e: ver_tuple(e.get('version')))
+        print(best.get('installPath', '') or '')
 except Exception:
     pass
 PYEOF
@@ -428,14 +574,34 @@ PYEOF
 
   # Node is very likely present because Claude Code is a Node app.
   if [ -z "$PLUGIN_ROOT" ] && command -v node >/dev/null 2>&1; then
-    PLUGIN_ROOT=$(node - "$INSTALLED_JSON" "$PLUGIN_KEY" <<'JSEOF' 2>/dev/null || true
+    PLUGIN_ROOT=$(PLUGIN_KEY="$PLUGIN_KEY" node - "$INSTALLED_JSON" <<'JSEOF' 2>/dev/null || true
 const fs = require('fs');
+function parseVersion(value) {
+  return String(value || '0.0.0')
+    .split('.')
+    .slice(0, 3)
+    .map((part) => {
+      const n = parseInt(part, 10);
+      return Number.isFinite(n) ? n : 0;
+    });
+}
+function compareVersions(a, b) {
+  const av = parseVersion(a && a.version);
+  const bv = parseVersion(b && b.version);
+  for (let i = 0; i < 3; i += 1) {
+    if (av[i] !== bv[i]) return av[i] - bv[i];
+  }
+  return 0;
+}
 try {
   const p = process.argv[2];
-  const k = process.argv[3];
+  const k = process.env.PLUGIN_KEY;
   const d = JSON.parse(fs.readFileSync(p, 'utf8'));
-  const e = (d.plugins && d.plugins[k] && d.plugins[k][0]) || null;
-  process.stdout.write((e && e.installPath) ? String(e.installPath) : '');
+  const entries = ((d.plugins && d.plugins[k]) || []).filter((entry) => entry && typeof entry === 'object' && entry.installPath);
+  if (entries.length > 0) {
+    const e = entries.slice().sort(compareVersions).pop();
+    process.stdout.write((e && e.installPath) ? String(e.installPath) : '');
+  }
 } catch (_) {}
 JSEOF
 )
@@ -444,7 +610,7 @@ JSEOF
   if [ -z "$PLUGIN_ROOT" ]; then
     # Best-effort fallback: extract first installPath containing the marketplace name.
     PLUGIN_ROOT=$(grep -o '"installPath"[[:space:]]*:[[:space:]]*"[^"]*'"${MARKETPLACE_NAME}"'[^"]*"' "$INSTALLED_JSON" 2>/dev/null \
-      | head -1 \
+      | tail -n 1 \
       | sed 's/"installPath"[[:space:]]*:[[:space:]]*"//;s/"$//' 2>/dev/null) || true
   fi
 fi
@@ -502,7 +668,7 @@ find_plugin_root() {
 
     # Try jq first (clean JSON parsing)
     if command -v jq &>/dev/null; then
-        PLUGIN_ROOT=$(jq -r ".plugins[\"${PLUGIN_KEY}\"][0].installPath // empty" "$INSTALLED_JSON" 2>/dev/null || true)
+        PLUGIN_ROOT=$(get_installed_plugin_root)
         if [ "$PLUGIN_ROOT" = "null" ]; then
             PLUGIN_ROOT=""
         fi
@@ -510,19 +676,8 @@ find_plugin_root() {
 
     # Fallback: python3 (available on macOS and most Linux)
     # Pass paths as arguments to avoid shell injection in python code
-    if [ -z "$PLUGIN_ROOT" ] && command -v python3 &>/dev/null; then
-        PLUGIN_ROOT=$(python3 - "$INSTALLED_JSON" "$PLUGIN_KEY" <<'PYEOF' 2>/dev/null || true
-import json, sys
-try:
-    with open(sys.argv[1]) as f:
-        d = json.load(f)
-    entries = d.get('plugins', {}).get(sys.argv[2], [])
-    if entries:
-        print(entries[0].get('installPath', ''))
-except Exception:
-    pass
-PYEOF
-)
+    if [ -z "$PLUGIN_ROOT" ]; then
+        PLUGIN_ROOT=$(get_installed_plugin_root)
     fi
 
     # Fallback: grep + sed (works everywhere)
@@ -530,7 +685,7 @@ PYEOF
         # Find the installPath that's inside the claude-notifications-go cache dir
         # Note: JSON may have whitespace after colon — "installPath": "..." or "installPath":"..."
         PLUGIN_ROOT=$(grep -o '"installPath"[[:space:]]*:[[:space:]]*"[^"]*'"${MARKETPLACE_NAME}"'[^"]*"' "$INSTALLED_JSON" 2>/dev/null \
-            | head -1 \
+            | tail -n 1 \
             | sed 's/"installPath"[[:space:]]*:[[:space:]]*"//;s/"$//' || true)
     fi
 
