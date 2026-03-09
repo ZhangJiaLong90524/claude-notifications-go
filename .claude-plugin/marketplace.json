@@ -2,7 +2,7 @@
     "name": "claude-notifications-go",
     "owner": {
         "name": "777genius",
-        "email": "[email protected]"
+        "email": "iliyazelenkog@gmail.com"
     },
     "metadata": {
         "description": "Smart notifications marketplace for Claude Code (Go implementation)",
@@ -15,7 +15,7 @@
         "version": "1.32.0",
         "author": {
             "name": "777genius",
-            "email": "[email protected]"
+            "email": "iliyazelenkog@gmail.com"
         },
         "repository": "https://github.com/777genius/claude-notifications-go",
         "license": "GPL-3.0",
