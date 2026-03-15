@@ -29,24 +29,24 @@ Auto-detects your terminal via `TERM_PROGRAM` / `__CFBundleIdentifier`. Uses `te
 | Terminal | Focus method |
 |----------|-------------|
 | Ghostty | AXDocument (OSC 7 CWD) with retry backoff |
-| VS Code / Insiders | AXTitle via focus-window subcommand |
-| iTerm2, Warp, kitty, WezTerm, Alacritty, Hyper, Apple Terminal | AppleScript (window title matching) |
-| Any other (custom `terminalBundleId`) | AppleScript (window title matching) |
+| VS Code / Insiders / Cursor | AXTitle via focus-window subcommand |
+| iTerm2, Warp, kitty, WezTerm, Alacritty, Hyper, Apple Terminal | AXTitle via focus-window subcommand |
+| Any other (custom `terminalBundleId`) | AXTitle via focus-window subcommand |
 
 To find your terminal's bundle ID: `osascript -e 'id of app "YourTerminal"'`
 
 ### Permissions
 
-**Ghostty** requires **Accessibility** permission — to enumerate windows via AXDocument. Prompted automatically on first use.
+All terminals with click-to-focus may require up to two permissions for window-level focus:
 
-**VS Code** requires two permissions:
-
-- **Accessibility** — to enumerate and raise windows via the AX API
+- **Accessibility** — to enumerate and raise the correct window via the AX API
 - **Screen Recording** — to read window titles across Spaces (macOS 10.15+)
 
-Both are requested automatically on first use. Without Screen Recording, clicking a notification still activates VS Code but raises whichever window was last active rather than the project-specific one.
+Screen Recording is requested automatically via system prompt on first use.
+Accessibility is prompted via a one-time notification with a link to System Settings.
 
-Other terminals use AppleScript and require no additional permissions.
+Without these permissions, clicking a notification still activates the terminal app,
+but raises whichever window was last active rather than the project-specific one.
 
 ## Linux
 

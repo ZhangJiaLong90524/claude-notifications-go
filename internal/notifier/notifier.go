@@ -208,9 +208,9 @@ func buildTerminalNotifierArgs(title, message, bundleID, cwd string) []string {
 // buildFocusScript returns the shell command for -execute in terminal-notifier.
 // For Ghostty: uses AXDocument attribute (OSC 7 CWD) via Accessibility API,
 // falling back to plain app activation.
-// For Electron editors (VS Code, Cursor): invokes the binary's focus-window
-// subcommand (CGo AXUIElement).
-// For all other apps: uses AppleScript title search by folder name.
+// For all apps (including Electron editors and regular terminals): invokes the
+// binary's focus-window subcommand which uses CGS + AXTitle APIs to find and
+// raise the correct window across Spaces.
 // Returns "" when cwd is empty or unusable (caller should use -activate instead).
 func buildFocusScript(bundleID, cwd string) string {
 	if cwd == "" {
@@ -227,13 +227,16 @@ func buildFocusScript(bundleID, cwd string) string {
 	}
 
 	if isElectronEditorBundleID(bundleID) {
-		// Electron editors don't support AppleScript window enumeration
-		// (-1708), so AppleScript is not a viable fallback. Return "" to use
-		// plain -activate if the binary path is unavailable.
 		return buildElectronEditorFocusScript(bundleID, cwd)
 	}
 
-	return buildAppleScriptFocusScript(bundleID, folderName)
+	// All other terminals: use focus-window subcommand (AXTitle matching + CGS Space switching).
+	// Previously used AppleScript (-execute osascript), but macOS Tahoe (26.x) broke
+	// Automation permission prompts for notification click handlers — osascript fails silently.
+	// The focus-window approach uses Accessibility + Screen Recording instead of Automation,
+	// with graceful fallback to app-level activation when permissions are not granted.
+	// See: https://github.com/777genius/claude-notifications-go/issues/47
+	return buildBinaryFocusScript(bundleID, cwd)
 }
 
 // isElectronEditorBundleID reports whether bundleID belongs to an Electron-based
@@ -251,16 +254,20 @@ func isGhosttyBundleID(bundleID string) bool {
 }
 
 // shellQuote wraps s in single quotes, escaping internal single quotes
-// using the '\” technique (end quote, literal apostrophe, resume quote).
+// using the '\" technique (end quote, literal apostrophe, resume quote).
 func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // buildBinaryFocusScript builds the -execute script for apps that use the
-// binary's focus-window subcommand (Electron editors, Ghostty).
+// binary's focus-window subcommand (all macOS terminals including Electron editors and Ghostty).
 // Returns "" (causing -activate fallback) if os.Executable() fails.
 func buildBinaryFocusScript(bundleID, cwd string) string {
 	exe, err := os.Executable()
+	if err != nil {
+		return ""
+	}
+	exe, err = filepath.EvalSymlinks(exe)
 	if err != nil {
 		return ""
 	}
@@ -290,42 +297,6 @@ func buildGhosttyFocusScript(bundleID, cwd string) string {
 func cwdToFileURL(cwd string) string {
 	u := url.URL{Scheme: "file", Path: strings.TrimRight(cwd, "/") + "/"}
 	return u.String()
-}
-
-// buildAppleScriptFocusScript builds the -execute script that activates an app
-// and raises the first window whose title contains folderName as a distinct
-// component (delimited by " — " or " - ", or exact match). This avoids false
-// matches like "app" matching "my-app".
-func buildAppleScriptFocusScript(bundleID, folderName string) string {
-	safeBundleID := sanitizeForAppleScript(bundleID)
-	safeFolder := sanitizeForAppleScript(folderName)
-	// AppleScript: check if name contains " — folder" or "folder — " or equals folder.
-	// This matches titles like "file — folder — App" without substring false positives.
-	return fmt.Sprintf(
-		`osascript -e 'tell application id "%s"' -e 'activate' -e 'set _n to "%s"' -e 'set _d1 to " \u2014 " & _n' -e 'set _d2 to _n & " \u2014 "' -e 'set _d3 to " - " & _n' -e 'set _d4 to _n & " - "' -e 'repeat with w in windows' -e 'set _t to name of w' -e 'if _t = _n or _t contains _d1 or _t contains _d2 or _t contains _d3 or _t contains _d4 then' -e 'set index of w to 1' -e 'exit repeat' -e 'end if' -e 'end repeat' -e 'end tell'`,
-		safeBundleID, safeFolder,
-	)
-}
-
-// sanitizeForAppleScript escapes characters that would break AppleScript string
-// literals or shell single-quote delimiters when embedded in a -execute command.
-// Single quotes use the shell end-quote/apostrophe/resume-quote technique.
-// Double quotes and backslashes are backslash-escaped for AppleScript.
-func sanitizeForAppleScript(s string) string {
-	var b strings.Builder
-	for _, r := range s {
-		switch r {
-		case '\'':
-			b.WriteString(`'\''`)
-		case '"':
-			b.WriteString(`\"`)
-		case '\\':
-			b.WriteString(`\\`)
-		default:
-			b.WriteRune(r)
-		}
-	}
-	return b.String()
 }
 
 // SendQuickNotification sends a one-off notification without requiring a

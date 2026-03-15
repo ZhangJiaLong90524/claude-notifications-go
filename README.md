@@ -149,14 +149,14 @@ If the binary auto-update didn't work (e.g. no internet at the time), run `/clau
 
 Clicking a notification activates your terminal window. Auto-detects terminal and platform.
 
-**macOS** — via AX API / AppleScript with bundle ID detection:
+**macOS** — via AX API with bundle ID detection:
 
 | Terminal | Focus method |
 |----------|-------------|
 | Ghostty | AXDocument (OSC 7 CWD) |
-| VS Code / Insiders | AXTitle (focus-window subcommand) |
-| iTerm2, Warp, kitty, WezTerm, Alacritty, Hyper, Apple Terminal | AppleScript (window title) |
-| Any other (custom `terminalBundleId`) | AppleScript (window title) |
+| VS Code / Insiders / Cursor | AXTitle (focus-window subcommand) |
+| iTerm2, Warp, kitty, WezTerm, Alacritty, Hyper, Apple Terminal | AXTitle (focus-window subcommand) |
+| Any other (custom `terminalBundleId`) | AXTitle (focus-window subcommand) |
 
 **Linux** — via D-Bus daemon with automatic compositor detection:
 

@@ -1087,17 +1087,21 @@ func TestCwdToFileURL(t *testing.T) {
 	}
 }
 
-func TestBuildFocusScript_NonVSCode_UsesAppleScript(t *testing.T) {
+func TestBuildFocusScript_RegularTerminal_UsesFocusWindow(t *testing.T) {
 	script := buildFocusScript("com.googlecode.iterm2", "/home/user/my-project")
-	if !strings.Contains(script, "osascript") {
-		t.Errorf("Non-VS Code focus script should use osascript, got: %s", script)
+	// Regular terminals now use focus-window subcommand instead of AppleScript.
+	// This avoids the Automation permission issue on macOS Tahoe (26.x).
+	if !strings.Contains(script, "focus-window") {
+		t.Errorf("Regular terminal focus script should use focus-window subcommand, got: %s", script)
 	}
-	if !strings.Contains(script, "my-project") {
-		t.Errorf("Non-VS Code focus script should contain folder name, got: %s", script)
+	if !strings.Contains(script, "com.googlecode.iterm2") {
+		t.Errorf("Regular terminal focus script should contain bundle ID, got: %s", script)
 	}
-	// Should NOT use code CLI
-	if strings.Contains(script, "code --reuse-window") {
-		t.Errorf("Non-VS Code focus script should not use code CLI, got: %s", script)
+	if !strings.Contains(script, "/home/user/my-project") {
+		t.Errorf("Regular terminal focus script should contain cwd, got: %s", script)
+	}
+	if strings.Contains(script, "osascript") {
+		t.Errorf("Regular terminal focus script should NOT use osascript, got: %s", script)
 	}
 }
 
@@ -1112,17 +1116,21 @@ func TestBuildTerminalNotifierArgs_WithCWD_UsesExecute(t *testing.T) {
 	}
 }
 
-func TestBuildTerminalNotifierArgs_WithCWD_TerminalUsesAppleScript(t *testing.T) {
+func TestBuildTerminalNotifierArgs_WithCWD_TerminalUsesFocusWindow(t *testing.T) {
 	args := buildTerminalNotifierArgs("Title", "Message", "com.googlecode.iterm2", "/home/user/my-project")
 	execVal := getArgValue(args, "-execute")
 	if execVal == "" {
 		t.Error("-execute should be present when cwd is set")
 	}
-	if !strings.Contains(execVal, "osascript") {
-		t.Errorf("-execute value should contain osascript, got: %s", execVal)
+	// Should use focus-window subcommand, not osascript (AppleScript is broken on macOS Tahoe)
+	if !strings.Contains(execVal, "focus-window") {
+		t.Errorf("-execute value should contain focus-window, got: %s", execVal)
+	}
+	if strings.Contains(execVal, "osascript") {
+		t.Errorf("-execute value should NOT contain osascript, got: %s", execVal)
 	}
 	if !strings.Contains(execVal, "my-project") {
-		t.Errorf("-execute value should contain folder name, got: %s", execVal)
+		t.Errorf("-execute value should contain cwd path, got: %s", execVal)
 	}
 }
 
@@ -1148,21 +1156,11 @@ func TestSendQuickNotification_EmptyFields(t *testing.T) {
 	_ = err
 }
 
-func TestSanitizeForAppleScript(t *testing.T) {
-	tests := []struct {
-		input    string
-		expected string
-	}{
-		{"normal-project", "normal-project"},
-		{"with'single", `with'\''single`},
-		{`with"double`, `with\"double`},
-		{`with\backslash`, `with\\backslash`},
-		{"my project", "my project"}, // spaces allowed
-	}
-	for _, tt := range tests {
-		got := sanitizeForAppleScript(tt.input)
-		if got != tt.expected {
-			t.Errorf("sanitizeForAppleScript(%q) = %q, want %q", tt.input, got, tt.expected)
-		}
+func TestBuildFocusScript_RegularTerminal_InvalidCWD_FallbackToActivate(t *testing.T) {
+	// When cwd is "." (invalid), buildFocusScript returns "" and
+	// buildTerminalNotifierArgs falls back to -activate (app-level focus)
+	args := buildTerminalNotifierArgs("Title", "Msg", "com.googlecode.iterm2", ".")
+	if !containsArg(args, "-activate", "com.googlecode.iterm2") {
+		t.Error("Should fallback to -activate when cwd is invalid")
 	}
 }

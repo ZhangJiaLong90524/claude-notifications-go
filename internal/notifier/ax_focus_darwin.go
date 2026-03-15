@@ -322,6 +322,10 @@ func FocusAppWindow(bundleID, cwd string) error {
 		return fmt.Errorf("Screen Recording permission required: grant it in System Settings → Privacy & Security → Screen Recording, then try again")
 	}
 	if prepResult == 0 {
+		// Window not found by title, but still activate the app so the user gets
+		// at least app-level focus. This matches the previous AppleScript behavior
+		// which always called "activate" before searching for windows.
+		C.activateByPID(C.int(pid))
 		return fmt.Errorf("window not found for %s (cwd: %s)", bundleID, cwd)
 	}
 	result := retryWindowFocus(func() C.int {
