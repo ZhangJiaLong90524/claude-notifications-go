@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.33.0] - 2026-03-15
+
+### Fixed
+- **macOS Tahoe: click-to-focus for all terminals** — replaced AppleScript-based window activation with the `focus-window` binary subcommand (AXTitle + CGS APIs) for regular terminals (iTerm2, Terminal.app, Alacritty, Warp, Hyper, etc.). macOS Tahoe (26.x) broke Automation permission prompts for notification click handlers, causing osascript to fail silently. The new approach uses Accessibility + Screen Recording instead of Automation, with graceful fallback to app-level activation when permissions are not granted ([#47](https://github.com/777genius/claude-notifications-go/issues/47))
+- **macOS: app always activates on click** — when window title doesn't match the project folder name, the terminal app now still gets activated (app-level focus) instead of doing nothing
+- **Symlink resolution** — `focus-window` now resolves symlinks via `filepath.EvalSymlinks` for more robust binary path handling
+
+### Changed
+- **CI: real-network E2E tests non-blocking** — marked real-network install E2E tests as `continue-on-error` across all platforms to prevent flaky network timeouts from failing CI jobs
+
 ## [1.32.0] - 2026-03-07
 
 ### Added
