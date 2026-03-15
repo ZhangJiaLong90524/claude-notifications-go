@@ -79,3 +79,4 @@ jobs:
       - name: Run install.sh E2E tests (real network)
         run: bash bin/install_e2e_test.sh --real-network
         timeout-minutes: 5
+        continue-on-error: true

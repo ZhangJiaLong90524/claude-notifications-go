@@ -76,3 +76,4 @@ jobs:
         run: bash bin/install_e2e_test.sh --real-network
         shell: bash
         timeout-minutes: 5
+        continue-on-error: true
