@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -351,7 +352,7 @@ func (n *Notifier) sendWithBeeep(title, message, appIcon, sound string) error {
 
 	// Send notification using beeep with proper title and clean message
 	if err := beeep.Notify(title, message, appIcon); err != nil {
-		logging.Error("Failed to send desktop notification: %v", err)
+		logging.Error("beeep.Notify failed on %s: %v (AppName=%q, title=%q)", runtime.GOOS, err, beeep.AppName, title)
 		return err
 	}
 
@@ -368,7 +369,7 @@ func (n *Notifier) playSoundAsync(sound string) {
 		n.mu.Lock()
 		if n.closing {
 			n.mu.Unlock()
-			logging.Debug("Skipping sound playback: notifier is closing")
+			logging.Warn("Sound blocked: notifier is closing (notification may have been sent without sound)")
 			return
 		}
 		n.wg.Add(1)

@@ -11,6 +11,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PLUGIN_JSON="$SCRIPT_DIR/../.claude-plugin/plugin.json"
 INSTALL_SCRIPT="$SCRIPT_DIR/install.sh"
 
+
 # On Windows prefer the native .exe (reliable from sh). Keep .bat for users who run it from cmd.exe.
 detect_windows_binary() {
     # Allow overriding for debugging/custom installs
@@ -142,6 +143,9 @@ run_install() {
 
 # === Main Logic ===
 
+STAMP_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/claude-notifications-go"
+VERSION_CACHE="$STAMP_DIR/verified-version"
+
 NEED_INSTALL=0
 NEED_FORCE=0
 
@@ -149,9 +153,20 @@ if ! binary_ok; then
     # Binary missing - need install
     NEED_INSTALL=1
 else
-    # Binary exists - check version
-    BIN_VER=$(get_binary_version)
+    # Binary exists - check version using cache to skip slow binary launch (~150ms)
     PLG_VER=$(get_plugin_version)
+
+    # Version cache: if plugin.json version matches cached version, skip get_binary_version
+    CACHED_VER=""
+    [ -f "$VERSION_CACHE" ] && IFS= read -r CACHED_VER < "$VERSION_CACHE" 2>/dev/null
+
+    if [ -n "$PLG_VER" ] && [ "$CACHED_VER" = "$PLG_VER" ]; then
+        # Cache hit — skip binary version check
+        BIN_VER="$PLG_VER"
+    else
+        # Cache miss — run binary to get actual version
+        BIN_VER=$(get_binary_version)
+    fi
 
     # Update only if both versions are known and differ
     if [ -n "$BIN_VER" ] && [ -n "$PLG_VER" ] && [ "$BIN_VER" != "$PLG_VER" ]; then
