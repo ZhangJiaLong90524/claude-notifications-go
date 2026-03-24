@@ -57,18 +57,13 @@ func getRecentAssistantMessages(messages []jsonl.Message, limit int) []jsonl.Mes
 	return jsonl.GetLastAssistantMessages(messages, limit)
 }
 
-// GenerateFromTranscript generates a status-specific summary from transcript
-func GenerateFromTranscript(transcriptPath string, status analyzer.Status, cfg *config.Config) string {
-	messages, err := jsonl.ParseFile(transcriptPath)
-	if err != nil {
-		return GetDefaultMessage(status, cfg)
-	}
-
+// GenerateFromMessages generates a status-specific summary from already-parsed messages.
+// This avoids re-reading the transcript file when messages are already available.
+func GenerateFromMessages(messages []jsonl.Message, status analyzer.Status, cfg *config.Config) string {
 	if len(messages) == 0 {
 		return GetDefaultMessage(status, cfg)
 	}
 
-	// Use status-specific generators
 	switch status {
 	case analyzer.StatusQuestion:
 		return generateQuestionSummary(messages, cfg)
@@ -87,6 +82,15 @@ func GenerateFromTranscript(transcriptPath string, status analyzer.Status, cfg *
 	default:
 		return generateTaskSummary(messages, cfg)
 	}
+}
+
+// GenerateFromTranscript generates a status-specific summary from transcript
+func GenerateFromTranscript(transcriptPath string, status analyzer.Status, cfg *config.Config) string {
+	messages, err := jsonl.ParseFile(transcriptPath)
+	if err != nil {
+		return GetDefaultMessage(status, cfg)
+	}
+	return GenerateFromMessages(messages, status, cfg)
 }
 
 // generateQuestionSummary generates summary for question status

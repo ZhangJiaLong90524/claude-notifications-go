@@ -172,6 +172,10 @@ else
     if [ -n "$BIN_VER" ] && [ -n "$PLG_VER" ] && [ "$BIN_VER" != "$PLG_VER" ]; then
         NEED_INSTALL=1
         NEED_FORCE=1
+    elif [ -n "$BIN_VER" ] && [ -n "$PLG_VER" ] && [ "$CACHED_VER" != "$PLG_VER" ]; then
+        # Versions match but cache is stale — update cache
+        mkdir -p "$STAMP_DIR" >/dev/null 2>&1 || true
+        printf '%s\n' "$PLG_VER" > "$VERSION_CACHE" 2>/dev/null || true
     fi
 fi
 
@@ -190,9 +194,13 @@ if [ "$NEED_INSTALL" = 1 ]; then
 
     if binary_ok; then
         NEW_VER=$(get_binary_version)
+        # Update version cache after successful install
+        if [ -n "$NEW_VER" ]; then
+            mkdir -p "$STAMP_DIR" >/dev/null 2>&1 || true
+            printf '%s\n' "$NEW_VER" > "$VERSION_CACHE" 2>/dev/null || true
+        fi
         # Avoid repeating the same install/update message more than once per version.
         if [ -n "$NEW_VER" ]; then
-            STAMP_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/claude-notifications-go"
             STAMP_FILE="$STAMP_DIR/update-stamp"
             mkdir -p "$STAMP_DIR" >/dev/null 2>&1 || true
 

@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 
+	"github.com/777genius/claude-notifications/internal/audio"
 	"github.com/777genius/claude-notifications/internal/errorhandler"
 	"github.com/777genius/claude-notifications/internal/hooks"
 	"github.com/777genius/claude-notifications/internal/logging"
@@ -47,6 +49,8 @@ func main() {
 			fmt.Fprintf(os.Stderr, "focus-window: %v\n", err)
 			os.Exit(1)
 		}
+	case "play-sound":
+		runPlaySound(os.Args[2:])
 	case "daemon", "--daemon":
 		runDaemon()
 	case "version", "--version", "-v":
@@ -112,6 +116,50 @@ func getPluginRoot() string {
 		return "."
 	}
 	return cwd
+}
+
+// runPlaySound plays a sound file and exits. Designed to be spawned as a detached
+// child process so the parent hook process does not wait for audio to finish.
+// Usage: play-sound <path> [--volume <0.0-1.0>] [--device <name>]
+func runPlaySound(args []string) {
+	if len(args) < 1 {
+		fmt.Fprintf(os.Stderr, "play-sound: sound file path required\n")
+		os.Exit(1)
+	}
+
+	soundPath := args[0]
+	volume := 1.0
+	deviceName := ""
+
+	// Parse optional flags
+	for i := 1; i < len(args); i++ {
+		switch args[i] {
+		case "--volume":
+			if i+1 < len(args) {
+				i++
+				if v, err := strconv.ParseFloat(args[i], 64); err == nil {
+					volume = v
+				}
+			}
+		case "--device":
+			if i+1 < len(args) {
+				i++
+				deviceName = args[i]
+			}
+		}
+	}
+
+	player, err := audio.NewPlayer(deviceName, volume)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "play-sound: failed to init player: %v\n", err)
+		os.Exit(1)
+	}
+	defer player.Close()
+
+	if err := player.Play(soundPath); err != nil {
+		fmt.Fprintf(os.Stderr, "play-sound: failed to play %s: %v\n", soundPath, err)
+		os.Exit(1)
+	}
 }
 
 func printUsage() {
