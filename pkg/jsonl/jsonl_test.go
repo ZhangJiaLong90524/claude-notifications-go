@@ -491,6 +491,32 @@ func TestParseFile_LargeFile(t *testing.T) {
 	assert.Len(t, messages, 1000)
 }
 
+func TestParse_LongLine(t *testing.T) {
+	// Generate a line >1MB to verify no bufio.Scanner limit
+	// Simulates base64-encoded images or large code diffs in transcripts
+	bigText := strings.Repeat("x", 2*1024*1024) // 2MB of text
+	line := `{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"` + bigText + `"}]}}` + "\n"
+	line += `{"type":"user","message":{"role":"user","content":"after big line"}}` + "\n"
+
+	messages, err := Parse(strings.NewReader(line))
+	require.NoError(t, err)
+	assert.Len(t, messages, 2)
+	assert.Equal(t, "assistant", messages[0].Type)
+	assert.Equal(t, bigText, messages[0].Message.Content[0].Text)
+	assert.Equal(t, "user", messages[1].Type)
+}
+
+func TestParse_LongLineNoTrailingNewline(t *testing.T) {
+	// Last line without trailing newline should still be parsed
+	bigText := strings.Repeat("a", 1500*1024) // 1.5MB
+	line := `{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"` + bigText + `"}]}}`
+
+	messages, err := Parse(strings.NewReader(line))
+	require.NoError(t, err)
+	assert.Len(t, messages, 1)
+	assert.Equal(t, bigText, messages[0].Message.Content[0].Text)
+}
+
 // === Tests for FindLastToolUse ===
 
 func TestFindLastToolUse_Found(t *testing.T) {

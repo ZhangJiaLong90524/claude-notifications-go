@@ -2,6 +2,7 @@ package jsonl
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"io"
 	"os"
@@ -101,32 +102,30 @@ func ParseFile(path string) ([]Message, error) {
 	return Parse(f)
 }
 
-// Parse parses JSONL from a reader and returns all messages
+// Parse parses JSONL from a reader and returns all messages.
+// Uses bufio.Reader instead of bufio.Scanner to handle arbitrarily long lines
+// (e.g. base64-encoded images, large code diffs in Claude Code transcripts).
 func Parse(r io.Reader) ([]Message, error) {
 	var messages []Message
-	scanner := bufio.NewScanner(r)
+	reader := bufio.NewReaderSize(r, 64*1024) // 64KB initial buffer
 
-	// Increase buffer size for large lines
-	buf := make([]byte, 0, 64*1024)
-	scanner.Buffer(buf, 1024*1024) // Max 1MB per line
-
-	for scanner.Scan() {
-		line := scanner.Bytes()
-		if len(line) == 0 {
-			continue
+	for {
+		line, err := reader.ReadBytes('\n')
+		// Process line even if err != nil (last line may lack trailing newline)
+		line = bytes.TrimRight(line, "\r\n")
+		if len(line) > 0 {
+			var msg Message
+			if jsonErr := json.Unmarshal(line, &msg); jsonErr == nil {
+				messages = append(messages, msg)
+			}
+			// Skip invalid JSON lines instead of failing
 		}
-
-		var msg Message
-		if err := json.Unmarshal(line, &msg); err != nil {
-			// Skip invalid lines instead of failing
-			continue
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			return nil, err
 		}
-
-		messages = append(messages, msg)
-	}
-
-	if err := scanner.Err(); err != nil {
-		return nil, err
 	}
 
 	return messages, nil
