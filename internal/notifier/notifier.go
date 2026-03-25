@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -109,7 +110,7 @@ func (n *Notifier) SendDesktop(status analyzer.Status, message, sessionID, cwd s
 				// Fall through to beeep
 			} else {
 				logging.Debug("Desktop notification sent via terminal-notifier: title=%s", title)
-				n.playSoundAsync(statusInfo.Sound)
+				n.playSoundDetached(statusInfo.Sound)
 				return nil
 			}
 		} else {
@@ -124,7 +125,7 @@ func (n *Notifier) SendDesktop(status analyzer.Status, message, sessionID, cwd s
 			// Fall through to beeep
 		} else {
 			logging.Debug("Desktop notification sent via Linux daemon: title=%s", title)
-			n.playSoundAsync(statusInfo.Sound)
+			n.playSoundDetached(statusInfo.Sound)
 			return nil
 		}
 	}
@@ -351,24 +352,67 @@ func (n *Notifier) sendWithBeeep(title, message, appIcon, sound string) error {
 
 	// Send notification using beeep with proper title and clean message
 	if err := beeep.Notify(title, message, appIcon); err != nil {
-		logging.Error("Failed to send desktop notification: %v", err)
+		logging.Error("beeep.Notify failed on %s: %v (AppName=%q, title=%q)", runtime.GOOS, err, beeep.AppName, title)
 		return err
 	}
 
 	logging.Debug("Desktop notification sent via beeep: title=%s", title)
 
-	n.playSoundAsync(sound)
+	n.playSoundDetached(sound)
 	return nil
 }
 
-// playSoundAsync plays sound asynchronously if enabled
+// playSoundDetached spawns a detached child process to play the sound.
+// The parent hook process does not wait for audio to finish, eliminating
+// the ~3.6s delay from notifier.Close() wg.Wait().
+// Falls back to playSoundAsync (inline playback) if spawn fails.
+func (n *Notifier) playSoundDetached(sound string) {
+	if !n.cfg.Notifications.Desktop.Sound || sound == "" {
+		return
+	}
+
+	if !platform.FileExists(sound) {
+		logging.Warn("Sound file not found: %s", sound)
+		return
+	}
+
+	exe, err := os.Executable()
+	if err != nil {
+		logging.Warn("Cannot resolve executable for detached sound, falling back to inline: %v", err)
+		n.playSoundAsync(sound)
+		return
+	}
+
+	args := []string{"play-sound", sound}
+	volume := n.cfg.Notifications.Desktop.Volume
+	if volume >= 0 && volume < 1.0 {
+		args = append(args, "--volume", fmt.Sprintf("%.2f", volume))
+	}
+	if device := n.cfg.Notifications.Desktop.AudioDevice; device != "" {
+		args = append(args, "--device", device)
+	}
+
+	cmd := exec.Command(exe, args...)
+	platform.SetDetachedProcAttr(cmd)
+
+	if err := cmd.Start(); err != nil {
+		logging.Warn("Failed to spawn detached sound process, falling back to inline: %v", err)
+		n.playSoundAsync(sound)
+		return
+	}
+
+	logging.Debug("Detached sound process spawned: pid=%d sound=%s", cmd.Process.Pid, sound)
+	// Do NOT call cmd.Wait() — child process runs independently
+}
+
+// playSoundAsync plays sound asynchronously if enabled (inline fallback)
 func (n *Notifier) playSoundAsync(sound string) {
 	if n.cfg.Notifications.Desktop.Sound && sound != "" {
 		// Check if notifier is closing to prevent WaitGroup race
 		n.mu.Lock()
 		if n.closing {
 			n.mu.Unlock()
-			logging.Debug("Skipping sound playback: notifier is closing")
+			logging.Warn("Sound blocked: notifier is closing (notification may have been sent without sound)")
 			return
 		}
 		n.wg.Add(1)

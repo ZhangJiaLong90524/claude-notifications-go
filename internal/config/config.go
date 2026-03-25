@@ -14,6 +14,12 @@ import (
 type Config struct {
 	Notifications NotificationsConfig   `json:"notifications"`
 	Statuses      map[string]StatusInfo `json:"statuses"`
+	Debug         DebugConfig           `json:"debug,omitempty"`
+}
+
+// DebugConfig represents debug/diagnostic settings
+type DebugConfig struct {
+	Benchmark bool `json:"benchmark"` // Enable benchmark timing output to log file
 }
 
 // NotificationsConfig represents notification settings
@@ -516,6 +522,11 @@ func (c *Config) ShouldSuppressForSubagents() bool {
 }
 
 // ShouldRespectJudgeMode returns true if CLAUDE_HOOK_JUDGE_MODE=true env var should suppress notifications (default: true)
+// IsBenchmarkEnabled returns true if benchmark timing is enabled via config
+func (c *Config) IsBenchmarkEnabled() bool {
+	return c.Debug.Benchmark
+}
+
 func (c *Config) ShouldRespectJudgeMode() bool {
 	if c.Notifications.RespectJudgeMode == nil {
 		return true // Default: respect judge mode

@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/777genius/claude-notifications/internal/logging"
 	"github.com/777genius/claude-notifications/internal/platform"
 )
 
@@ -43,7 +44,11 @@ func (m *Manager) CheckEarlyDuplicate(sessionID string, hookEvent ...string) boo
 	age := platform.FileAge(lockPath)
 
 	// If mtime is unavailable (Windows issue) or lock is fresh (<2s), treat as duplicate
-	if age == -1 || (age >= 0 && age < 2) {
+	if age == -1 {
+		logging.Warn("Lock file mtime unavailable: %s (treating as duplicate, possible causes: permission error, race condition, or filesystem issue)", lockPath)
+		return true
+	}
+	if age >= 0 && age < 2 {
 		return true
 	}
 

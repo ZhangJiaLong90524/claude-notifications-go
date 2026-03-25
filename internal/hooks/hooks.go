@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/777genius/claude-notifications/internal/analyzer"
+	"github.com/777genius/claude-notifications/internal/benchmark"
 	"github.com/777genius/claude-notifications/internal/config"
 	"github.com/777genius/claude-notifications/internal/dedup"
 	"github.com/777genius/claude-notifications/internal/errorhandler"
@@ -20,6 +21,7 @@ import (
 	"github.com/777genius/claude-notifications/internal/state"
 	"github.com/777genius/claude-notifications/internal/summary"
 	"github.com/777genius/claude-notifications/internal/webhook"
+	"github.com/777genius/claude-notifications/pkg/jsonl"
 )
 
 // HookData represents the data received from Claude Code hooks
@@ -78,6 +80,14 @@ func NewHandler(pluginRoot string) (*Handler, error) {
 
 // HandleHook handles a hook event
 func (h *Handler) HandleHook(hookEvent string, input io.Reader) error {
+	// Benchmark instrumentation (enabled via config debug.benchmark)
+	bench := benchmark.New(h.cfg.IsBenchmarkEnabled(), logging.Info)
+	bench.Start("hook.total")
+	defer func() {
+		bench.Elapsed("hook.total")
+		bench.Report()
+	}()
+
 	// Add panic recovery for robustness
 	defer errorhandler.HandlePanic()
 
@@ -91,26 +101,32 @@ func (h *Handler) HandleHook(hookEvent string, input io.Reader) error {
 
 	// Ensure notifier resources are cleaned up when function exits
 	defer func() {
+		bench.Start("notifier.close")
 		if err := h.notifierSvc.Close(); err != nil {
 			logging.Warn("Failed to close notifier: %v", err)
 		}
+		bench.Elapsed("notifier.close")
 	}()
 
 	// Ensure webhook sender waits for in-flight requests before exit
 	defer func() {
+		bench.Start("webhook.shutdown")
 		if err := h.webhookSvc.Shutdown(5 * time.Second); err != nil {
 			logging.Warn("Failed to shutdown webhook sender: %v", err)
 		}
+		bench.Elapsed("webhook.shutdown")
 	}()
 
 	logging.SetPrefix(fmt.Sprintf("PID:%d", os.Getpid()))
 	logging.Debug("=== Hook triggered: %s ===", hookEvent)
 
 	// Parse hook data
+	bench.Start("stdin.parse")
 	var hookData HookData
 	if err := json.NewDecoder(input).Decode(&hookData); err != nil {
 		return fmt.Errorf("failed to parse hook data: %w", err)
 	}
+	bench.Elapsed("stdin.parse")
 
 	logging.Debug("Hook data: session=%s, transcript=%s, tool=%s",
 		hookData.SessionID, hookData.TranscriptPath, hookData.ToolName)
@@ -122,10 +138,13 @@ func (h *Handler) HandleHook(hookEvent string, input io.Reader) error {
 	}
 
 	// Phase 1: Early duplicate check (per hook event type)
+	bench.Start("dedup.early_check")
 	if h.dedupMgr.CheckEarlyDuplicate(hookData.SessionID, hookEvent) {
+		bench.Elapsed("dedup.early_check")
 		logging.Debug("Early duplicate detected, skipping")
 		return nil
 	}
+	bench.Elapsed("dedup.early_check")
 
 	// Check if any notification method is enabled
 	if !h.cfg.IsAnyNotificationEnabled() {
@@ -135,6 +154,7 @@ func (h *Handler) HandleHook(hookEvent string, input io.Reader) error {
 
 	// Determine status based on hook type
 	var status analyzer.Status
+	var parsedMessages []jsonl.Message // reused by generateMessage to avoid double I/O
 	var err error
 
 	switch hookEvent {
@@ -153,7 +173,9 @@ func (h *Handler) HandleHook(hookEvent string, input io.Reader) error {
 			return nil
 		}
 		// Analyze the transcript to determine status
-		status, err = h.handleStopEvent(&hookData)
+		bench.Start("stop.analyze")
+		status, parsedMessages, err = h.handleStopEvent(&hookData)
+		bench.Elapsed("stop.analyze")
 		if err != nil {
 			return err
 		}
@@ -174,7 +196,9 @@ func (h *Handler) HandleHook(hookEvent string, input io.Reader) error {
 		}
 		// If enabled, handle like Stop
 		logging.Debug("SubagentStop: notifications enabled (config), processing")
-		status, err = h.handleStopEvent(&hookData)
+		bench.Start("stop.analyze")
+		status, parsedMessages, err = h.handleStopEvent(&hookData)
+		bench.Elapsed("stop.analyze")
 		if err != nil {
 			return err
 		}
@@ -190,8 +214,10 @@ func (h *Handler) HandleHook(hookEvent string, input io.Reader) error {
 	}
 
 	// Check suppress-filters before any state mutations (dedup lock, cooldowns)
+	bench.Start("git.branch")
 	{
 		gitBranch := platform.GetGitBranch(hookData.CWD)
+		bench.Elapsed("git.branch")
 		folderName := filepath.Base(hookData.CWD)
 		if h.cfg.ShouldFilter(string(status), gitBranch, folderName) {
 			logging.Debug("Notification suppressed by filter: status=%s branch=%q folder=%s", status, gitBranch, folderName)
@@ -264,7 +290,9 @@ func (h *Handler) HandleHook(hookEvent string, input io.Reader) error {
 	}
 
 	// Generate message
-	message := h.generateMessage(&hookData, status)
+	bench.Start("message.generate")
+	message := h.generateMessage(&hookData, status, parsedMessages)
+	bench.Elapsed("message.generate")
 
 	// Acquire content lock to prevent race between different hooks (Stop vs Notification)
 	// This ensures only one process can check and update duplicate state at a time
@@ -274,7 +302,7 @@ func (h *Handler) HandleHook(hookEvent string, input io.Reader) error {
 		// Error (not "lock busy") - continue without lock as fallback
 	} else if !contentLockAcquired {
 		// Lock is held by another process - it's already handling this notification
-		logging.Debug("Content lock held by another process, skipping to prevent duplicate")
+		logging.Warn("Content lock held by another process: session=%s hook=%s (notification skipped)", hookData.SessionID, hookEvent)
 		return nil
 	}
 
@@ -302,7 +330,9 @@ func (h *Handler) HandleHook(hookEvent string, input io.Reader) error {
 	}
 
 	// Send notifications
+	bench.Start("notify.send")
 	h.sendNotifications(status, message, hookData.SessionID, hookData.CWD)
+	bench.Elapsed("notify.send")
 
 	logging.Debug("=== Hook completed: %s ===", hookEvent)
 	return nil
@@ -335,31 +365,41 @@ func (h *Handler) handleNotificationEvent(hookData *HookData) (analyzer.Status, 
 	return analyzer.StatusQuestion, nil
 }
 
-// handleStopEvent handles Stop/SubagentStop hooks
-func (h *Handler) handleStopEvent(hookData *HookData) (analyzer.Status, error) {
+// handleStopEvent handles Stop/SubagentStop hooks.
+// Returns the parsed messages alongside the status so callers can reuse them
+// (e.g., for summary generation) without re-reading the transcript file.
+func (h *Handler) handleStopEvent(hookData *HookData) (analyzer.Status, []jsonl.Message, error) {
 	if hookData.TranscriptPath == "" {
 		logging.Warn("Transcript path is empty, skipping notification")
-		return analyzer.StatusUnknown, nil
+		return analyzer.StatusUnknown, nil, nil
 	}
 
 	if !platform.FileExists(hookData.TranscriptPath) {
 		logging.Warn("Transcript file not found: %s", hookData.TranscriptPath)
-		return analyzer.StatusUnknown, nil
+		return analyzer.StatusUnknown, nil, nil
 	}
 
-	status, err := analyzer.AnalyzeTranscript(hookData.TranscriptPath, h.cfg)
+	status, messages, err := analyzer.AnalyzeTranscriptWithMessages(hookData.TranscriptPath, h.cfg)
 	if err != nil {
 		logging.Error("Failed to analyze transcript: %v", err)
-		return analyzer.StatusUnknown, nil
+		return analyzer.StatusUnknown, nil, nil
 	}
 
 	logging.Debug("Analyzed status: %s", status)
-	return status, nil
+	return status, messages, nil
 }
 
-// generateMessage generates a notification message
-func (h *Handler) generateMessage(hookData *HookData, status analyzer.Status) string {
-	if hookData.TranscriptPath != "" && platform.FileExists(hookData.TranscriptPath) {
+// generateMessage generates a notification message.
+// If messages are provided (from handleStopEvent), uses them directly to avoid re-reading the transcript.
+func (h *Handler) generateMessage(hookData *HookData, status analyzer.Status, messages []jsonl.Message) string {
+	// Use pre-parsed messages if available (eliminates ~234ms double I/O)
+	if len(messages) > 0 {
+		msg := summary.GenerateFromMessages(messages, status, h.cfg)
+		if msg != "" {
+			return msg
+		}
+	} else if hookData.TranscriptPath != "" && platform.FileExists(hookData.TranscriptPath) {
+		// Fallback: read transcript from file (for non-Stop hooks)
 		msg := summary.GenerateFromTranscript(hookData.TranscriptPath, status, h.cfg)
 		if msg != "" {
 			return msg

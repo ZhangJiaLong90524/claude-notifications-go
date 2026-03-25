@@ -44,21 +44,28 @@ const (
 
 // AnalyzeTranscript analyzes a transcript file and determines the current status
 func AnalyzeTranscript(transcriptPath string, cfg *config.Config) (Status, error) {
+	status, _, err := AnalyzeTranscriptWithMessages(transcriptPath, cfg)
+	return status, err
+}
+
+// AnalyzeTranscriptWithMessages analyzes a transcript and also returns the parsed messages.
+// This allows callers to reuse the messages (e.g., for summary generation) without re-reading the file.
+func AnalyzeTranscriptWithMessages(transcriptPath string, cfg *config.Config) (Status, []jsonl.Message, error) {
 	// Parse JSONL file
 	messages, err := jsonl.ParseFile(transcriptPath)
 	if err != nil {
-		return StatusUnknown, err
+		return StatusUnknown, nil, err
 	}
 
 	// PRIORITY CHECK 1: Session limit reached
 	// This takes precedence over all other status detection
 	if detectSessionLimitReached(messages) {
-		return StatusSessionLimitReached, nil
+		return StatusSessionLimitReached, messages, nil
 	}
 
 	// PRIORITY CHECK 2: API errors (uses isApiErrorMessage flag from JSONL)
 	if apiStatus := detectAPIErrors(messages); apiStatus != StatusUnknown {
-		return apiStatus, nil
+		return apiStatus, messages, nil
 	}
 
 	// Find last user message timestamp
@@ -70,7 +77,7 @@ func AnalyzeTranscript(transcriptPath string, cfg *config.Config) (Status, error
 	filteredMessages := jsonl.FilterMessagesAfterTimestamp(messages, userTS)
 
 	if len(filteredMessages) == 0 {
-		return StatusUnknown, nil
+		return StatusUnknown, messages, nil
 	}
 
 	// Take last 15 messages (temporal window) from filtered set
@@ -90,12 +97,12 @@ func AnalyzeTranscript(transcriptPath string, cfg *config.Config) (Status, error
 
 		// 1a. Last tool is ExitPlanMode → plan just created
 		if lastTool == "ExitPlanMode" {
-			return StatusPlanReady, nil
+			return StatusPlanReady, messages, nil
 		}
 
 		// 1b. Last tool is AskUserQuestion → waiting for user
 		if lastTool == "AskUserQuestion" {
-			return StatusQuestion, nil
+			return StatusQuestion, messages, nil
 		}
 
 		// 1c. ExitPlanMode exists AND tools after it → plan executed
@@ -103,7 +110,7 @@ func AnalyzeTranscript(transcriptPath string, cfg *config.Config) (Status, error
 		if exitPlanPos >= 0 {
 			toolsAfter := jsonl.CountToolsAfterPosition(tools, exitPlanPos)
 			if toolsAfter > 0 {
-				return StatusTaskComplete, nil
+				return StatusTaskComplete, messages, nil
 			}
 		}
 
@@ -120,28 +127,28 @@ func AnalyzeTranscript(transcriptPath string, cfg *config.Config) (Status, error
 			recentText := jsonl.ExtractRecentText(recentMessages, 5)
 
 			if len(recentText) > 200 {
-				return StatusReviewComplete, nil
+				return StatusReviewComplete, messages, nil
 			}
 		}
 
 		// 1e. Last tool is active (Write/Edit/Bash) → work completed
 		if contains(ActiveTools, lastTool) {
-			return StatusTaskComplete, nil
+			return StatusTaskComplete, messages, nil
 		}
 
 		// 1f. Any tool usage at all → likely task completed
 		// (matches bash version: toolCount >= 1 → task_complete)
-		return StatusTaskComplete, nil
+		return StatusTaskComplete, messages, nil
 	}
 
 	// 2. No tools found
 	// If notifyOnTextResponse is enabled (default: true), treat as task_complete
 	// This handles cases like extended thinking where Claude responds with text only
 	if cfg.ShouldNotifyOnTextResponse() {
-		return StatusTaskComplete, nil
+		return StatusTaskComplete, messages, nil
 	}
 
-	return StatusUnknown, nil
+	return StatusUnknown, messages, nil
 }
 
 // contains checks if a slice contains a string
