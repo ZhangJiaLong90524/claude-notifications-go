@@ -42,24 +42,20 @@ static void activateByPID(int pid) {
 }
 
 // titleMatchesFolder checks if a window title contains folderName as a
-// distinct component. VS Code titles use " \u2014 " (em dash) as separator:
-// "file.go \u2014 my-project \u2014 Visual Studio Code".
-// First tries exact component match (split by " \u2014 "), then falls back
-// to substring containsString for non-VS Code apps.
+// distinct component. Different apps use different dash separators:
+//   VS Code:   "file.go \u2014 my-project \u2014 Visual Studio Code"  (em dash U+2014)
+//   JetBrains: "file.go \u2013 my-project \u2013 PhpStorm"            (en dash U+2013)
+//   Others:    "file.go - my-project - Terminal"                       (hyphen U+002D)
+// Tries each separator in turn and returns YES on the first exact component match.
 static BOOL titleMatchesFolder(NSString *title, NSString *folder) {
-	// Try exact component match (VS Code / Electron-style titles)
-	NSArray *components = [title componentsSeparatedByString:@" \u2014 "];
-	for (NSString *comp in components) {
-		NSString *trimmed = [comp stringByTrimmingCharactersInSet:
-			[NSCharacterSet whitespaceCharacterSet]];
-		if ([trimmed isEqualToString:folder]) return YES;
-	}
-	// Also try " - " (regular dash) for other apps
-	components = [title componentsSeparatedByString:@" - "];
-	for (NSString *comp in components) {
-		NSString *trimmed = [comp stringByTrimmingCharactersInSet:
-			[NSCharacterSet whitespaceCharacterSet]];
-		if ([trimmed isEqualToString:folder]) return YES;
+	NSArray *separators = @[@" \u2014 ", @" \u2013 ", @" - "];
+	for (NSString *sep in separators) {
+		NSArray *components = [title componentsSeparatedByString:sep];
+		for (NSString *comp in components) {
+			NSString *trimmed = [comp stringByTrimmingCharactersInSet:
+				[NSCharacterSet whitespaceCharacterSet]];
+			if ([trimmed isEqualToString:folder]) return YES;
+		}
 	}
 	return NO;
 }
