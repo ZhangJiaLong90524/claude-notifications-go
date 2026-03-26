@@ -14,6 +14,8 @@
 
 Smart notifications for Claude Code with click-to-focus, git branch display, and webhook integrations.
 
+> **Boost your productivity** — check out the [advanced task manager for Claude with a convenient UI](https://github.com/777genius/claude_agent_teams_ui), from the creator of this plugin.
+
 ## Table of Contents
 
   - [Features](#features)
