@@ -16,6 +16,9 @@
       "format": "json",
       "headers": {}
     },
+    "osc": {
+      "format": "auto"
+    },
     "suppressQuestionAfterTaskCompleteSeconds": 12,
     "suppressQuestionAfterAnyNotificationSeconds": 7,
     "suppressForSubagents": true,

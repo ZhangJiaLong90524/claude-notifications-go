@@ -18,12 +18,15 @@ import (
 	"github.com/777genius/claude-notifications/internal/config"
 	"github.com/777genius/claude-notifications/internal/errorhandler"
 	"github.com/777genius/claude-notifications/internal/logging"
+	"github.com/777genius/claude-notifications/internal/notification"
+	"github.com/777genius/claude-notifications/internal/osc"
 	"github.com/777genius/claude-notifications/internal/platform"
 )
 
 // Notifier sends desktop notifications
 type Notifier struct {
 	cfg         *config.Config
+	oscSender   *osc.Sender
 	audioPlayer *audio.Player
 	playerInit  sync.Once
 	playerErr   error
@@ -34,9 +37,13 @@ type Notifier struct {
 
 // New creates a new notifier
 func New(cfg *config.Config) *Notifier {
-	return &Notifier{
-		cfg: cfg,
+	n := &Notifier{cfg: cfg}
+	if cfg.IsOSCEnabled() {
+		n.oscSender = osc.New(osc.Config{
+			Format: cfg.Notifications.OSC.Format,
+		})
 	}
+	return n
 }
 
 // isTimeSensitiveStatus returns true for statuses that should break through Focus Mode
@@ -52,8 +59,12 @@ func isTimeSensitiveStatus(status analyzer.Status) bool {
 // SendDesktop sends a desktop notification using beeep (cross-platform)
 // On macOS with clickToFocus enabled, uses terminal-notifier for click-to-focus support
 // On Linux with clickToFocus enabled, uses background daemon for click-to-focus support
-// cwd is the working directory of the project; used for window-specific focus. May be empty.
-func (n *Notifier) SendDesktop(status analyzer.Status, message, sessionID, cwd string) error {
+func (n *Notifier) SendDesktop(evt notification.Event) error {
+	// Transitional: rebuild legacy parameters from Event
+	status := evt.Status
+	message := notification.RenderEnhancedMessage(evt)
+	sessionID := evt.SessionID
+	cwd := evt.CWD
 	// Send terminal bell for terminal tab indicators (e.g. Ghostty, tmux)
 	if n.cfg.IsTerminalBellEnabled() {
 		sendTerminalBell()
@@ -132,6 +143,15 @@ func (n *Notifier) SendDesktop(status analyzer.Status, message, sessionID, cwd s
 
 	// Standard path: beeep (Windows, macOS fallback, Linux fallback)
 	return n.sendWithBeeep(title, cleanMessage, appIcon, statusInfo.Sound)
+}
+
+// SendOSC sends an OSC terminal notification.
+// Returns nil silently if OSC is not configured.
+func (n *Notifier) SendOSC(evt notification.Event) error {
+	if n.oscSender == nil {
+		return nil
+	}
+	return n.oscSender.SendEvent(evt)
 }
 
 // sendWithTerminalNotifier sends notification via terminal-notifier on macOS

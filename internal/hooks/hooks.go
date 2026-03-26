@@ -15,6 +15,7 @@ import (
 	"github.com/777genius/claude-notifications/internal/dedup"
 	"github.com/777genius/claude-notifications/internal/errorhandler"
 	"github.com/777genius/claude-notifications/internal/logging"
+	"github.com/777genius/claude-notifications/internal/notification"
 	"github.com/777genius/claude-notifications/internal/notifier"
 	"github.com/777genius/claude-notifications/internal/platform"
 	"github.com/777genius/claude-notifications/internal/sessionname"
@@ -33,9 +34,10 @@ type HookData struct {
 	HookEventName  string `json:"hook_event_name,omitempty"`
 }
 
-// notifierInterface defines the interface for sending desktop notifications
+// notifierInterface defines the interface for sending notifications
 type notifierInterface interface {
-	SendDesktop(status analyzer.Status, message, sessionID, cwd string) error
+	SendDesktop(evt notification.Event) error
+	SendOSC(evt notification.Event) error
 	Close() error
 }
 
@@ -409,42 +411,59 @@ func (h *Handler) generateMessage(hookData *HookData, status analyzer.Status, me
 	return summary.GenerateSimple(status, h.cfg)
 }
 
-// sendNotifications sends desktop and webhook notifications
+// buildNotification creates a transport-agnostic Event from hook context.
+func (h *Handler) buildNotification(status analyzer.Status, message, sessionID, cwd string) (notification.Event, error) {
+	info, ok := h.cfg.GetStatusInfo(string(status))
+	if !ok {
+		return notification.Event{}, fmt.Errorf("unknown status: %s", status)
+	}
+	return notification.Event{
+		Status:      status,
+		SessionID:   sessionID,
+		CWD:         cwd,
+		SessionName: sessionname.GenerateSessionLabel(sessionID),
+		GitBranch:   platform.GetGitBranch(cwd),
+		Folder:      filepath.Base(cwd),
+		Title:       info.Title,
+		Body:        message,
+	}, nil
+}
+
+// sendNotifications sends desktop, webhook, and OSC notifications
 func (h *Handler) sendNotifications(status analyzer.Status, message, sessionID, cwd string) {
 	// Add panic recovery to prevent notification failures from crashing the plugin
 	defer errorhandler.HandlePanic()
 
-	// Add session name, git branch and folder name to message
-	sessionName := sessionname.GenerateSessionLabel(sessionID)
-	gitBranch := platform.GetGitBranch(cwd)
-	folderName := filepath.Base(cwd)
-
-	// Format: "[sessionname|branch folder] message" or "[sessionname folder] message"
-	var enhancedMessage string
-	if gitBranch != "" {
-		enhancedMessage = fmt.Sprintf("[%s|%s %s] %s", sessionName, gitBranch, folderName, message)
-	} else {
-		enhancedMessage = fmt.Sprintf("[%s %s] %s", sessionName, folderName, message)
+	evt, err := h.buildNotification(status, message, sessionID, cwd)
+	if err != nil {
+		errorhandler.HandleError(err, "Failed to build notification")
+		return
 	}
-
-	logging.Debug("Session name: %s, git branch: %s, folder: %s", sessionName, gitBranch, folderName)
 
 	statusStr := string(status)
 
-	// Send desktop notification (check per-status enabled)
+	// Send desktop notification
 	if h.cfg.IsStatusDesktopEnabled(statusStr) {
-		if err := h.notifierSvc.SendDesktop(status, enhancedMessage, sessionID, cwd); err != nil {
+		if err := h.notifierSvc.SendDesktop(evt); err != nil {
 			errorhandler.HandleError(err, "Failed to send desktop notification")
 		}
 	} else {
 		logging.Debug("Desktop notification disabled for status: %s", statusStr)
 	}
 
-	// Send webhook notification (async, check per-status enabled)
+	// Send webhook notification (transitional: render Event -> legacy string)
 	if h.cfg.IsStatusWebhookEnabled(statusStr) {
+		enhancedMessage := notification.RenderEnhancedMessage(evt)
 		h.webhookSvc.SendAsync(status, enhancedMessage, sessionID)
 	} else {
 		logging.Debug("Webhook notification disabled for status: %s", statusStr)
+	}
+
+	// Send OSC terminal notification
+	if h.cfg.IsStatusOSCEnabled(statusStr) {
+		if err := h.notifierSvc.SendOSC(evt); err != nil {
+			logging.Debug("OSC notification failed: %v", err)
+		}
 	}
 }
 

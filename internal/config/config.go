@@ -26,6 +26,7 @@ type DebugConfig struct {
 type NotificationsConfig struct {
 	Desktop                                     DesktopConfig    `json:"desktop"`
 	Webhook                                     WebhookConfig    `json:"webhook"`
+	OSC                                         OSCConfig        `json:"osc"`
 	SuppressQuestionAfterTaskCompleteSeconds    *int             `json:"suppressQuestionAfterTaskCompleteSeconds"`
 	SuppressQuestionAfterAnyNotificationSeconds *int             `json:"suppressQuestionAfterAnyNotificationSeconds"`
 	NotifyOnSubagentStop                        bool             `json:"notifyOnSubagentStop"`      // Send notifications when subagents (Task tool) complete, default: false
@@ -80,6 +81,14 @@ type CircuitBreakerConfig struct {
 type RateLimitConfig struct {
 	Enabled           bool `json:"enabled"`
 	RequestsPerMinute int  `json:"requestsPerMinute"`
+}
+
+// OSCConfig represents OSC terminal notification settings.
+// OSC (Operating System Command) sequences travel through SSH connections
+// to the user's local terminal, enabling notifications for remote sessions.
+type OSCConfig struct {
+	Enabled *bool  `json:"enabled,omitempty"` // nil = auto (SSH -> on, local -> off)
+	Format  string `json:"format,omitempty"`  // "auto", "osc777", "osc9", "osc99"
 }
 
 // StatusInfo represents configuration for a specific status
@@ -171,6 +180,9 @@ func DefaultConfig() *Config {
 					Enabled:           true,
 					RequestsPerMinute: 10,
 				},
+			},
+			OSC: OSCConfig{
+				Format: "auto",
 			},
 			SuppressQuestionAfterTaskCompleteSeconds:    intPtr(12),
 			SuppressQuestionAfterAnyNotificationSeconds: intPtr(defaultSuppressQuestionAfterAnyNotificationSeconds),
@@ -443,6 +455,18 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("suppressQuestionAfterAnyNotificationSeconds must be >= 0")
 	}
 
+	// Validate OSC format
+	validOSCFormats := map[string]bool{
+		"":       true,
+		"auto":   true,
+		"osc777": true,
+		"osc9":   true,
+		"osc99":  true,
+	}
+	if !validOSCFormats[c.Notifications.OSC.Format] {
+		return fmt.Errorf("invalid OSC format: %s (must be one of: auto, osc777, osc9, osc99)", c.Notifications.OSC.Format)
+	}
+
 	// Validate suppress-filters
 	validStatuses := map[string]bool{
 		"task_complete":         true,
@@ -481,9 +505,10 @@ func (c *Config) IsWebhookEnabled() bool {
 	return c.Notifications.Webhook.Enabled
 }
 
-// IsAnyNotificationEnabled returns true if at least one notification method is enabled
+// IsAnyNotificationEnabled returns true if at least one notification method is enabled.
+// Note: OSC auto-mode is env-dependent (enabled in SSH sessions).
 func (c *Config) IsAnyNotificationEnabled() bool {
-	return c.IsDesktopEnabled() || c.IsWebhookEnabled()
+	return c.IsDesktopEnabled() || c.IsWebhookEnabled() || c.IsOSCEnabled()
 }
 
 // GetSuppressQuestionAfterTaskCompleteSeconds returns the cooldown in seconds
@@ -565,6 +590,28 @@ func (c *Config) IsStatusDesktopEnabled(status string) bool {
 // Considers both global webhook.enabled and per-status enabled
 func (c *Config) IsStatusWebhookEnabled(status string) bool {
 	return c.IsWebhookEnabled() && c.IsStatusEnabled(status)
+}
+
+// IsOSCEnabled returns true if OSC terminal notifications are enabled.
+// When Enabled is nil (default), auto-detects based on SSH environment variables.
+func (c *Config) IsOSCEnabled() bool {
+	if c.Notifications.OSC.Enabled != nil {
+		return *c.Notifications.OSC.Enabled
+	}
+	// Auto: enable in SSH sessions where native desktop notifications can't reach the user
+	return isSSHSession()
+}
+
+// IsStatusOSCEnabled returns true if OSC notifications for this status are enabled.
+func (c *Config) IsStatusOSCEnabled(status string) bool {
+	return c.IsOSCEnabled() && c.IsStatusEnabled(status)
+}
+
+// isSSHSession checks SSH env vars without importing the osc package (avoids cycle).
+func isSSHSession() bool {
+	return os.Getenv("SSH_CONNECTION") != "" ||
+		os.Getenv("SSH_CLIENT") != "" ||
+		os.Getenv("SSH_TTY") != ""
 }
 
 // ShouldFilter returns true if any suppress-filter rule matches the given context.
