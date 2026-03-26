@@ -112,22 +112,26 @@ func IsTmuxControlMode() bool {
 
 // buildTmuxNotifierArgs constructs command-line arguments for terminal-notifier
 // when running inside tmux. Uses both -activate (to focus the terminal app)
-// and -execute (to switch to the correct tmux window/pane) on click.
+// and -execute (to switch to the correct tmux session/window/pane) on click.
 func buildTmuxNotifierArgs(title, message, paneTarget, bundleID string) []string {
 	// Use absolute path to tmux and explicit socket — ClaudeNotifier.app
 	// runs without the user's shell PATH, so bare "tmux" won't be found.
 	tmuxPath := getTmuxPath()
 	socketPath := getTmuxSocketPath()
 
+	// switch-client is a separate command so its failure (e.g. no attached
+	// clients) doesn't abort the select-window/select-pane chain.
 	var tmuxCmd string
 	if socketPath != "" {
 		tmuxCmd = fmt.Sprintf(
-			"'%s' -S '%s' select-window -t '%s' \\; select-pane -t '%s'",
+			"'%s' -S '%s' switch-client -t '%s' 2>/dev/null; '%s' -S '%s' select-window -t '%s' \\; select-pane -t '%s'",
+			tmuxPath, socketPath, paneTarget,
 			tmuxPath, socketPath, paneTarget, paneTarget,
 		)
 	} else {
 		tmuxCmd = fmt.Sprintf(
-			"'%s' select-window -t '%s' \\; select-pane -t '%s'",
+			"'%s' switch-client -t '%s' 2>/dev/null; '%s' select-window -t '%s' \\; select-pane -t '%s'",
+			tmuxPath, paneTarget,
 			tmuxPath, paneTarget, paneTarget,
 		)
 	}
