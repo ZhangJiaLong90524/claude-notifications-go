@@ -302,7 +302,7 @@ func TestSendDesktop_AllStatuses(t *testing.T) {
 	for _, status := range statuses {
 		t.Run(string(status), func(t *testing.T) {
 			// Should not panic for any status
-			err := n.SendDesktop(notification.Event{Status: status, Body: "[test] Message for "+string(status), SessionID: "test-session", CWD: ""})
+			err := n.SendDesktop(notification.Event{Status: status, Body: "[test] Message for " + string(status), SessionID: "test-session", CWD: ""})
 			// Error is acceptable (notifications may not work in CI)
 			_ = err
 		})
