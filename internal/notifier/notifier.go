@@ -352,6 +352,10 @@ func (n *Notifier) sendWithBeeep(title, message, appIcon, sound string) error {
 
 	// Send notification using beeep with proper title and clean message
 	if err := beeep.Notify(title, message, appIcon); err != nil {
+		if platform.IsWindows() && !platform.IsToastEnabled(beeep.AppName) {
+			logging.Warn("Toast notifications may be disabled for %q. "+
+				"Check Settings > System > Notifications.", beeep.AppName)
+		}
 		logging.Error("beeep.Notify failed on %s: %v (AppName=%q, title=%q)", runtime.GOOS, err, beeep.AppName, title)
 		return err
 	}
