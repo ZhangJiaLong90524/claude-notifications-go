@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.34.1] - 2026-03-26
+
+### Fixed
+- **tmux: click-to-focus in multi-session setups** — notification click now correctly switches to the right tmux session before selecting the window/pane. Previously, `select-window` only searched within the current session, so clicking a notification in a multi-session setup (e.g. one session per git worktree) would stay on whichever session was last active ([#54](https://github.com/777genius/claude-notifications-go/issues/54))
+
 ## [1.34.0] - 2026-03-25
 
 ### Fixed
