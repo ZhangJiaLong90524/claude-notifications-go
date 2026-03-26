@@ -315,13 +315,21 @@ func (h *Handler) HandleHook(hookEvent string, input io.Reader) error {
 		}
 	}()
 
-	// Check for duplicate message content (3 minutes = 180 seconds window)
-	isDuplicate, err := h.stateMgr.IsDuplicateMessage(hookData.SessionID, message, 180)
-	if err != nil {
-		logging.Warn("Failed to check duplicate message: %v", err)
-	} else if isDuplicate {
-		logging.Debug("Duplicate message content detected within 3 minutes, skipping")
-		return nil
+	// Check for duplicate message content (3 minutes = 180 seconds window).
+	// Skip for question status: consecutive permission prompts read the same
+	// transcript and produce identical summaries, but each is a distinct
+	// user-facing event. Question is already protected by per-hook dedup
+	// lock (2s TTL), content lock (5s TTL), and cooldown suppression.
+	if status == analyzer.StatusQuestion {
+		logging.Debug("Skipping content dedup for question status")
+	} else {
+		isDuplicate, err := h.stateMgr.IsDuplicateMessage(hookData.SessionID, message, 180)
+		if err != nil {
+			logging.Warn("Failed to check duplicate message: %v", err)
+		} else if isDuplicate {
+			logging.Debug("Duplicate message content detected within 3 minutes, skipping")
+			return nil
+		}
 	}
 
 	// Update last notification time and message

@@ -501,6 +501,62 @@ func TestHandler_EarlyDuplicateCheck(t *testing.T) {
 	}
 }
 
+func TestHandler_ConsecutiveNotifications_SkipsContentDedup(t *testing.T) {
+	cfg := &config.Config{
+		Notifications: config.NotificationsConfig{
+			Desktop: config.DesktopConfig{Enabled: true},
+			SuppressQuestionAfterAnyNotificationSeconds: intPtr(0), // disable cooldown for this test
+			SuppressQuestionAfterTaskCompleteSeconds:    intPtr(0),
+		},
+		Statuses: map[string]config.StatusInfo{
+			"question": {Title: "Question"},
+		},
+	}
+
+	handler, mockNotif, _ := newTestHandler(t, cfg)
+
+	// First Notification hook (permission prompt #1)
+	hookData1 := buildHookDataJSON(HookData{
+		SessionID: "test-consecutive-notif",
+		CWD:       "/test",
+	})
+
+	err := handler.HandleHook("Notification", hookData1)
+	if err != nil {
+		t.Fatalf("first notification error: %v", err)
+	}
+
+	firstCallCount := mockNotif.callCount()
+	if firstCallCount == 0 {
+		t.Fatal("first notification should be sent")
+	}
+
+	// Wait for per-hook dedup lock to expire (2s TTL) so the second
+	// notification is not blocked by the early duplicate check.
+	// It should still be within the 180s content dedup window.
+	time.Sleep(2100 * time.Millisecond)
+
+	// Second Notification hook with same session (permission prompt #2).
+	// This generates identical summary because the transcript hasn't changed.
+	hookData2 := buildHookDataJSON(HookData{
+		SessionID: "test-consecutive-notif",
+		CWD:       "/test",
+	})
+
+	err = handler.HandleHook("Notification", hookData2)
+	if err != nil {
+		t.Fatalf("second notification error: %v", err)
+	}
+
+	// Second notification must NOT be suppressed by content dedup.
+	// Question status skips content dedup because consecutive permission
+	// prompts are distinct user-facing events with identical summaries.
+	if mockNotif.callCount() <= firstCallCount {
+		t.Errorf("second question notification should not be suppressed by content dedup, got %d calls, want > %d",
+			mockNotif.callCount(), firstCallCount)
+	}
+}
+
 // === Cooldown Tests ===
 
 func TestHandler_QuestionCooldownAfterTaskComplete(t *testing.T) {
