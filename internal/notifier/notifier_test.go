@@ -771,7 +771,8 @@ func TestBuildNotifierCommand_UsesOpenForClaudeNotifier(t *testing.T) {
 	)
 
 	cmd := buildNotifierCommand(notifierPath, []string{"-title", "Test", "-message", "Hello"})
-	if filepath.Base(cmd.Path) != "open" {
+	commandBase := strings.ToLower(filepath.Base(cmd.Path))
+	if commandBase != "open" && commandBase != "open.exe" {
 		t.Fatalf("Expected open command for ClaudeNotifier.app, got %s", cmd.Path)
 	}
 
