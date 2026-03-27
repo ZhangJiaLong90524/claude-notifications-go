@@ -168,7 +168,7 @@ func (n *Notifier) sendWithTerminalNotifier(title, message, subtitle, sessionID 
 	// Always suppress sound in Swift — Go manages sound via audio player
 	args = append(args, "-nosound")
 
-	cmd := exec.Command(notifierPath, args...)
+	cmd := buildNotifierCommand(notifierPath, args)
 
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -177,6 +177,36 @@ func (n *Notifier) sendWithTerminalNotifier(title, message, subtitle, sessionID 
 
 	logging.Debug("terminal-notifier executed: bundleID=%s", bundleID)
 	return nil
+}
+
+// buildNotifierCommand builds the execution command for a notifier binary.
+// ClaudeNotifier must be launched via LaunchServices (open -W -n ... --args)
+// so UNUserNotificationCenter gets a valid bundle proxy under hardened runtime.
+func buildNotifierCommand(notifierPath string, args []string) *exec.Cmd {
+	if appPath, ok := claudeNotifierAppPath(notifierPath); ok {
+		openArgs := []string{"-W", "-n", appPath, "--args", "-launchedViaLaunchServices"}
+		openArgs = append(openArgs, args...)
+		return exec.Command("open", openArgs...)
+	}
+	return exec.Command(notifierPath, args...)
+}
+
+// claudeNotifierAppPath extracts the ClaudeNotifier.app bundle path from the
+// embedded terminal-notifier-modern executable path.
+func claudeNotifierAppPath(notifierPath string) (string, bool) {
+	cleanPath := filepath.Clean(notifierPath)
+	suffix := filepath.Join("Contents", "MacOS", "terminal-notifier-modern")
+	if !strings.HasSuffix(cleanPath, suffix) {
+		return "", false
+	}
+
+	bundlePath := strings.TrimSuffix(cleanPath, suffix)
+	bundlePath = strings.TrimSuffix(bundlePath, string(filepath.Separator))
+	if !strings.HasSuffix(bundlePath, "ClaudeNotifier.app") {
+		return "", false
+	}
+
+	return bundlePath, true
 }
 
 // buildTerminalNotifierArgs constructs command-line arguments for terminal-notifier.
@@ -316,7 +346,7 @@ func SendQuickNotification(title, message, executeCmd string) error {
 			"-group", fmt.Sprintf("claude-quick-%d", time.Now().UnixNano()),
 			"-nosound",
 		)
-		if output, err := exec.Command(notifierPath, args...).CombinedOutput(); err == nil {
+		if output, err := buildNotifierCommand(notifierPath, args).CombinedOutput(); err == nil {
 			return nil
 		} else {
 			logging.Debug("terminal-notifier failed: %v, output: %s", err, string(output))

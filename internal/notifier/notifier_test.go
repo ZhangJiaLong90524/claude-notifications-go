@@ -2,6 +2,7 @@ package notifier
 
 import (
 	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
@@ -727,6 +728,75 @@ func TestBuildTerminalNotifierArgs_GroupIDFormat(t *testing.T) {
 	// Group ID should start with "claude-notif-"
 	if !strings.HasPrefix(groupID, "claude-notif-") {
 		t.Errorf("Group ID should start with 'claude-notif-', got: %s", groupID)
+	}
+}
+
+func TestClaudeNotifierAppPath_ExtractsBundlePath(t *testing.T) {
+	notifierPath := filepath.Join(
+		string(filepath.Separator),
+		"tmp",
+		"plugin",
+		"bin",
+		"ClaudeNotifier.app",
+		"Contents",
+		"MacOS",
+		"terminal-notifier-modern",
+	)
+	appPath, ok := claudeNotifierAppPath(notifierPath)
+	if !ok {
+		t.Fatal("Expected ClaudeNotifier path to be recognized")
+	}
+	if filepath.Base(appPath) != "ClaudeNotifier.app" {
+		t.Fatalf("Expected app path to end with ClaudeNotifier.app, got %s", appPath)
+	}
+}
+
+func TestClaudeNotifierAppPath_IgnoresLegacyBinary(t *testing.T) {
+	notifierPath := filepath.Join(string(filepath.Separator), "usr", "local", "bin", "terminal-notifier")
+	if _, ok := claudeNotifierAppPath(notifierPath); ok {
+		t.Fatalf("Legacy terminal-notifier path should not be treated as ClaudeNotifier.app: %s", notifierPath)
+	}
+}
+
+func TestBuildNotifierCommand_UsesOpenForClaudeNotifier(t *testing.T) {
+	notifierPath := filepath.Join(
+		string(filepath.Separator),
+		"tmp",
+		"plugin",
+		"bin",
+		"ClaudeNotifier.app",
+		"Contents",
+		"MacOS",
+		"terminal-notifier-modern",
+	)
+
+	cmd := buildNotifierCommand(notifierPath, []string{"-title", "Test", "-message", "Hello"})
+	if filepath.Base(cmd.Path) != "open" {
+		t.Fatalf("Expected open command for ClaudeNotifier.app, got %s", cmd.Path)
+	}
+
+	if len(cmd.Args) < 8 {
+		t.Fatalf("Expected open command args with --args payload, got: %v", cmd.Args)
+	}
+	if cmd.Args[1] != "-W" || cmd.Args[2] != "-n" {
+		t.Fatalf("Expected open -W -n flags, got: %v", cmd.Args)
+	}
+	if cmd.Args[4] != "--args" {
+		t.Fatalf("Expected --args marker, got: %v", cmd.Args)
+	}
+	if cmd.Args[5] != "-launchedViaLaunchServices" {
+		t.Fatalf("Expected LaunchServices marker arg, got: %v", cmd.Args)
+	}
+}
+
+func TestBuildNotifierCommand_UsesDirectBinaryForLegacy(t *testing.T) {
+	notifierPath := filepath.Join(string(filepath.Separator), "usr", "local", "bin", "terminal-notifier")
+	cmd := buildNotifierCommand(notifierPath, []string{"-title", "Test"})
+	if cmd.Path != notifierPath {
+		t.Fatalf("Expected direct notifier path, got %s", cmd.Path)
+	}
+	if len(cmd.Args) < 2 || cmd.Args[0] != notifierPath {
+		t.Fatalf("Unexpected command args: %v", cmd.Args)
 	}
 }
 
