@@ -11,6 +11,7 @@ BUILD_DIR="${PROJECT_DIR}/.build"
 APP_BUNDLE="${PROJECT_DIR}/${APP_BUNDLE_NAME}.app"
 ICON_SRC="${REPO_ROOT}/claude_icon.png"
 ENTITLEMENTS="${PROJECT_DIR}/entitlements.plist"
+CI_ENTITLEMENTS="${PROJECT_DIR}/entitlements-ci.plist"
 
 CI_MODE=false
 SKIP_NOTARIZE=false
@@ -101,8 +102,15 @@ fi
 
 if [ "$CI_MODE" = true ]; then
     CODESIGN_FLAGS=(--force --timestamp --options runtime)
-    if [ -f "$ENTITLEMENTS" ]; then
-        CODESIGN_FLAGS+=(--entitlements "$ENTITLEMENTS")
+    EFFECTIVE_ENTITLEMENTS=""
+    if [ -f "$CI_ENTITLEMENTS" ]; then
+        EFFECTIVE_ENTITLEMENTS="$CI_ENTITLEMENTS"
+    elif [ -f "$ENTITLEMENTS" ]; then
+        EFFECTIVE_ENTITLEMENTS="$ENTITLEMENTS"
+    fi
+    if [ -n "$EFFECTIVE_ENTITLEMENTS" ]; then
+        CODESIGN_FLAGS+=(--entitlements "$EFFECTIVE_ENTITLEMENTS")
+        echo "Using entitlements: ${EFFECTIVE_ENTITLEMENTS}"
     fi
 
     SIGNING_IDENTITY="Developer ID Application"
@@ -110,6 +118,13 @@ if [ "$CI_MODE" = true ]; then
     codesign "${CODESIGN_FLAGS[@]}" --sign "${SIGNING_IDENTITY}" "${APP_BUNDLE}"
     codesign --verify --verbose "${APP_BUNDLE}"
     echo "Signature verified"
+
+    # Runtime smoke check: if launchd rejects entitlements/signature, even `-help`
+    # exits with SIGKILL. Catch this before notarization/upload.
+    if ! "${APP_BUNDLE}/Contents/MacOS/${BINARY_NAME}" -help >/dev/null 2>&1; then
+        echo "Error: signed binary failed runtime smoke check (-help)"
+        exit 1
+    fi
 else
     echo "Code signing .app bundle (ad-hoc)..."
     codesign --force --deep --sign - "$APP_BUNDLE" 2>/dev/null || {
