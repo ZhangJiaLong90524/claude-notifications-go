@@ -2152,7 +2152,7 @@ func TestHandler_TeammateIdle_SendsWhenAllReady(t *testing.T) {
 
 	// Pre-record: lead stopped + alice already idle
 	teamMgr := setupTeamStateManager(t, claudeDir)
-	teamMgr.RecordLeadStopped(teamName)            //nolint:errcheck
+	teamMgr.RecordLeadStopped(teamName)           //nolint:errcheck
 	teamMgr.RecordTeammateIdle(teamName, "alice") //nolint:errcheck
 
 	// Now bob goes idle → should trigger notification
