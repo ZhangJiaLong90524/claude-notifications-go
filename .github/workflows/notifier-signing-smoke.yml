@@ -1,6 +1,9 @@
 name: Notifier Signing Smoke Test
 
 on:
+  push:
+    tags:
+      - "smoke-notary-*"
   workflow_dispatch:
     inputs:
       skip_notarize:
