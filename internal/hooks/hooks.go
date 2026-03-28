@@ -414,8 +414,9 @@ func (h *Handler) generateMessage(hookData *HookData, status analyzer.Status, me
 // buildNotification creates a transport-agnostic Event from hook context.
 func (h *Handler) buildNotification(status analyzer.Status, message, sessionID, cwd string) (notification.Event, error) {
 	info, ok := h.cfg.GetStatusInfo(string(status))
-	if !ok {
-		return notification.Event{}, fmt.Errorf("unknown status: %s", status)
+	title := string(status)
+	if ok {
+		title = info.Title
 	}
 	return notification.Event{
 		Status:      status,
@@ -424,7 +425,7 @@ func (h *Handler) buildNotification(status analyzer.Status, message, sessionID, 
 		SessionName: sessionname.GenerateSessionLabel(sessionID),
 		GitBranch:   platform.GetGitBranch(cwd),
 		Folder:      filepath.Base(cwd),
-		Title:       info.Title,
+		Title:       title,
 		Body:        message,
 	}, nil
 }

@@ -2083,3 +2083,31 @@ func TestSendNotifications_OSCExplicitDisabled(t *testing.T) {
 		t.Fatal("OSC should NOT fire with explicit enabled=false even with SSH")
 	}
 }
+
+func TestSendNotifications_UnknownStatusStillSends(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Notifications.Desktop.Enabled = false
+	cfg.Notifications.Webhook.Enabled = true
+	enabled := true
+	cfg.Notifications.OSC.Enabled = &enabled
+
+	handler, mockNotif, mockWH := newTestHandler(t, cfg)
+	status := analyzer.Status("custom_status")
+
+	handler.sendNotifications(status, "Custom body", "test-unknown-1", t.TempDir())
+
+	if !mockWH.wasCalled() {
+		t.Fatal("expected webhook notification for unknown status")
+	}
+	if !mockNotif.oscWasCalled() {
+		t.Fatal("expected OSC notification for unknown status")
+	}
+
+	call := mockNotif.oscCalls[len(mockNotif.oscCalls)-1]
+	if call.Title != "custom_status" {
+		t.Fatalf("expected fallback title %q, got %q", "custom_status", call.Title)
+	}
+	if call.Status != status {
+		t.Fatalf("expected status %q, got %q", status, call.Status)
+	}
+}
