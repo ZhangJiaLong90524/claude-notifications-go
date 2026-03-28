@@ -26,7 +26,6 @@ type DebugConfig struct {
 type NotificationsConfig struct {
 	Desktop                                     DesktopConfig    `json:"desktop"`
 	Webhook                                     WebhookConfig    `json:"webhook"`
-	OSC                                         OSCConfig        `json:"osc"`
 	SuppressQuestionAfterTaskCompleteSeconds    *int             `json:"suppressQuestionAfterTaskCompleteSeconds"`
 	SuppressQuestionAfterAnyNotificationSeconds *int             `json:"suppressQuestionAfterAnyNotificationSeconds"`
 	NotifyOnSubagentStop                        bool             `json:"notifyOnSubagentStop"`      // Send notifications when subagents (Task tool) complete, default: false
@@ -34,6 +33,7 @@ type NotificationsConfig struct {
 	NotifyOnTextResponse                        *bool            `json:"notifyOnTextResponse"`      // Send notifications for text-only responses (no tools), default: true
 	RespectJudgeMode                            *bool            `json:"respectJudgeMode"`          // Honor CLAUDE_HOOK_JUDGE_MODE=true env var to suppress notifications, default: true
 	SuppressFilters                             []SuppressFilter `json:"suppressFilters,omitempty"` // Rules for suppressing notifications by status/branch/folder
+	TeamMode                                    string           `json:"teamMode,omitempty"`        // Team mode: "always" (no suppression, default), "wait-all" (suppress lead, notify when all idle), "never" (silent in team mode)
 }
 
 // DesktopConfig represents desktop notification settings
@@ -81,14 +81,6 @@ type CircuitBreakerConfig struct {
 type RateLimitConfig struct {
 	Enabled           bool `json:"enabled"`
 	RequestsPerMinute int  `json:"requestsPerMinute"`
-}
-
-// OSCConfig represents OSC terminal notification settings.
-// OSC (Operating System Command) sequences travel through SSH connections
-// to the user's local terminal, enabling notifications for remote sessions.
-type OSCConfig struct {
-	Enabled *bool  `json:"enabled,omitempty"` // nil = auto (SSH -> on, local -> off)
-	Format  string `json:"format,omitempty"`  // "auto", "osc777", "osc9", "osc99"
 }
 
 // StatusInfo represents configuration for a specific status
@@ -180,9 +172,6 @@ func DefaultConfig() *Config {
 					Enabled:           true,
 					RequestsPerMinute: 10,
 				},
-			},
-			OSC: OSCConfig{
-				Format: "auto",
 			},
 			SuppressQuestionAfterTaskCompleteSeconds:    intPtr(12),
 			SuppressQuestionAfterAnyNotificationSeconds: intPtr(defaultSuppressQuestionAfterAnyNotificationSeconds),
@@ -455,16 +444,10 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("suppressQuestionAfterAnyNotificationSeconds must be >= 0")
 	}
 
-	// Validate OSC format
-	validOSCFormats := map[string]bool{
-		"":       true,
-		"auto":   true,
-		"osc777": true,
-		"osc9":   true,
-		"osc99":  true,
-	}
-	if !validOSCFormats[c.Notifications.OSC.Format] {
-		return fmt.Errorf("invalid OSC format: %s (must be one of: auto, osc777, osc9, osc99)", c.Notifications.OSC.Format)
+	// Validate teamMode
+	validTeamModes := map[string]bool{"": true, "wait-all": true, "always": true, "never": true}
+	if !validTeamModes[c.Notifications.TeamMode] {
+		return fmt.Errorf("invalid teamMode %q (must be one of: always, wait-all, never)", c.Notifications.TeamMode)
 	}
 
 	// Validate suppress-filters
@@ -505,10 +488,9 @@ func (c *Config) IsWebhookEnabled() bool {
 	return c.Notifications.Webhook.Enabled
 }
 
-// IsAnyNotificationEnabled returns true if at least one notification method is enabled.
-// Note: OSC auto-mode is env-dependent (enabled in SSH sessions).
+// IsAnyNotificationEnabled returns true if at least one notification method is enabled
 func (c *Config) IsAnyNotificationEnabled() bool {
-	return c.IsDesktopEnabled() || c.IsWebhookEnabled() || c.IsOSCEnabled()
+	return c.IsDesktopEnabled() || c.IsWebhookEnabled()
 }
 
 // GetSuppressQuestionAfterTaskCompleteSeconds returns the cooldown in seconds
@@ -559,6 +541,16 @@ func (c *Config) ShouldRespectJudgeMode() bool {
 	return *c.Notifications.RespectJudgeMode
 }
 
+// GetTeamMode returns the team notification mode: "always" (default), "wait-all", or "never"
+func (c *Config) GetTeamMode() string {
+	switch c.Notifications.TeamMode {
+	case "wait-all", "never":
+		return c.Notifications.TeamMode
+	default:
+		return "always"
+	}
+}
+
 // IsStatusEnabled returns true if notifications for this status are enabled
 // Returns true by default (if Enabled is nil or not specified) for backward compatibility
 func (c *Config) IsStatusEnabled(status string) bool {
@@ -590,28 +582,6 @@ func (c *Config) IsStatusDesktopEnabled(status string) bool {
 // Considers both global webhook.enabled and per-status enabled
 func (c *Config) IsStatusWebhookEnabled(status string) bool {
 	return c.IsWebhookEnabled() && c.IsStatusEnabled(status)
-}
-
-// IsOSCEnabled returns true if OSC terminal notifications are enabled.
-// When Enabled is nil (default), auto-detects based on SSH environment variables.
-func (c *Config) IsOSCEnabled() bool {
-	if c.Notifications.OSC.Enabled != nil {
-		return *c.Notifications.OSC.Enabled
-	}
-	// Auto: enable in SSH sessions where native desktop notifications can't reach the user
-	return isSSHSession()
-}
-
-// IsStatusOSCEnabled returns true if OSC notifications for this status are enabled.
-func (c *Config) IsStatusOSCEnabled(status string) bool {
-	return c.IsOSCEnabled() && c.IsStatusEnabled(status)
-}
-
-// isSSHSession checks SSH env vars without importing the osc package (avoids cycle).
-func isSSHSession() bool {
-	return os.Getenv("SSH_CONNECTION") != "" ||
-		os.Getenv("SSH_CLIENT") != "" ||
-		os.Getenv("SSH_TTY") != ""
 }
 
 // ShouldFilter returns true if any suppress-filter rule matches the given context.

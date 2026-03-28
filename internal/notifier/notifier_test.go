@@ -2,7 +2,6 @@ package notifier
 
 import (
 	"os"
-	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
@@ -12,7 +11,6 @@ import (
 
 	"github.com/777genius/claude-notifications/internal/analyzer"
 	"github.com/777genius/claude-notifications/internal/config"
-	"github.com/777genius/claude-notifications/internal/notification"
 )
 
 func TestExtractSessionInfo(t *testing.T) {
@@ -138,7 +136,7 @@ func TestSendDesktopRestoresAppName(t *testing.T) {
 	n := New(cfg)
 
 	// Call SendDesktop - should not change AppName since notifications are disabled
-	_ = n.SendDesktop(notification.Event{Status: analyzer.StatusTaskComplete, Body: "test message", SessionID: "", CWD: ""})
+	_ = n.SendDesktop(analyzer.StatusTaskComplete, "test message", "", "")
 
 	// Verify AppName is unchanged (because we skipped notification)
 	if beeep.AppName != testAppName {
@@ -151,7 +149,7 @@ func TestSendDesktopRestoresAppName(t *testing.T) {
 
 	// This will attempt to send a real notification and may fail in CI,
 	// but the important thing is that AppName is restored afterward
-	_ = n.SendDesktop(notification.Event{Status: analyzer.StatusTaskComplete, Body: "test message", SessionID: "", CWD: ""})
+	_ = n.SendDesktop(analyzer.StatusTaskComplete, "test message", "", "")
 
 	// Verify AppName is restored to testAppName after the defer runs
 	if beeep.AppName != testAppName {
@@ -173,7 +171,7 @@ func TestSendDesktop_ClickToFocusDisabled(t *testing.T) {
 	// Should not panic and should use beeep path
 	// We can't easily verify which path was taken without mocking,
 	// but we can verify it doesn't crash
-	err := n.SendDesktop(notification.Event{Status: analyzer.StatusTaskComplete, Body: "[test-session] Task done", SessionID: "", CWD: ""})
+	err := n.SendDesktop(analyzer.StatusTaskComplete, "[test-session] Task done", "", "")
 	// Error is acceptable in CI environment where notifications may not work
 	_ = err
 }
@@ -193,7 +191,7 @@ func TestSendDesktop_WithTerminalBundleIDOverride(t *testing.T) {
 	}
 
 	// SendDesktop should work without panic
-	err := n.SendDesktop(notification.Event{Status: analyzer.StatusTaskComplete, Body: "Test message", SessionID: "", CWD: ""})
+	err := n.SendDesktop(analyzer.StatusTaskComplete, "Test message", "", "")
 	_ = err // Error acceptable in CI
 }
 
@@ -303,7 +301,7 @@ func TestSendDesktop_AllStatuses(t *testing.T) {
 	for _, status := range statuses {
 		t.Run(string(status), func(t *testing.T) {
 			// Should not panic for any status
-			err := n.SendDesktop(notification.Event{Status: status, Body: "[test] Message for " + string(status), SessionID: "test-session", CWD: ""})
+			err := n.SendDesktop(status, "[test] Message for "+string(status), "test-session", "")
 			// Error is acceptable (notifications may not work in CI)
 			_ = err
 		})
@@ -317,7 +315,7 @@ func TestSendDesktop_Disabled(t *testing.T) {
 	n := New(cfg)
 
 	// Should return nil without doing anything
-	err := n.SendDesktop(notification.Event{Status: analyzer.StatusTaskComplete, Body: "test message", SessionID: "", CWD: ""})
+	err := n.SendDesktop(analyzer.StatusTaskComplete, "test message", "", "")
 	if err != nil {
 		t.Errorf("Expected nil error when disabled, got: %v", err)
 	}
@@ -330,7 +328,7 @@ func TestSendDesktop_UnknownStatus(t *testing.T) {
 	n := New(cfg)
 
 	// Should return error for unknown status
-	err := n.SendDesktop(notification.Event{Status: analyzer.Status("unknown_status"), Body: "test message", SessionID: "", CWD: ""})
+	err := n.SendDesktop(analyzer.Status("unknown_status"), "test message", "", "")
 	if err == nil {
 		t.Error("Expected error for unknown status, got nil")
 	}
@@ -345,7 +343,7 @@ func TestSendDesktop_WithSessionName(t *testing.T) {
 	n := New(cfg)
 
 	// Test with session name
-	err := n.SendDesktop(notification.Event{Status: analyzer.StatusTaskComplete, Body: "[my-session] Task completed", SessionID: "", CWD: ""})
+	err := n.SendDesktop(analyzer.StatusTaskComplete, "[my-session] Task completed", "", "")
 	// Error acceptable in CI
 	_ = err
 }
@@ -359,7 +357,7 @@ func TestSendDesktop_WithoutSessionName(t *testing.T) {
 	n := New(cfg)
 
 	// Test without session name
-	err := n.SendDesktop(notification.Event{Status: analyzer.StatusTaskComplete, Body: "Task completed without session", SessionID: "", CWD: ""})
+	err := n.SendDesktop(analyzer.StatusTaskComplete, "Task completed without session", "", "")
 	// Error acceptable in CI
 	_ = err
 }
@@ -509,7 +507,7 @@ func TestSendDesktop_ClickToFocusWithBeeepFallback(t *testing.T) {
 
 	// Should work regardless of terminal-notifier availability
 	// Will use terminal-notifier if available, otherwise beeep
-	err := n.SendDesktop(notification.Event{Status: analyzer.StatusTaskComplete, Body: "[fallback-test] Testing fallback", SessionID: "", CWD: ""})
+	err := n.SendDesktop(analyzer.StatusTaskComplete, "[fallback-test] Testing fallback", "", "")
 	// Error acceptable in CI where neither may work
 	_ = err
 }
@@ -647,7 +645,7 @@ func TestSendDesktop_FallbackWhenTerminalNotifierFails(t *testing.T) {
 	n := New(cfg)
 
 	// Should not return error - should fall back to beeep
-	err := n.SendDesktop(notification.Event{Status: analyzer.StatusTaskComplete, Body: "[test] Fallback test", SessionID: "", CWD: ""})
+	err := n.SendDesktop(analyzer.StatusTaskComplete, "[test] Fallback test", "", "")
 	// Error is acceptable in CI, but should not panic
 	_ = err
 }
@@ -661,7 +659,7 @@ func TestSendDesktop_ClickToFocusDisabledUsesBeeep(t *testing.T) {
 	n := New(cfg)
 
 	// Should use beeep path even on macOS
-	err := n.SendDesktop(notification.Event{Status: analyzer.StatusTaskComplete, Body: "[test] Beeep path test", SessionID: "", CWD: ""})
+	err := n.SendDesktop(analyzer.StatusTaskComplete, "[test] Beeep path test", "", "")
 	// Error acceptable in CI
 	_ = err
 }
@@ -732,76 +730,6 @@ func TestBuildTerminalNotifierArgs_GroupIDFormat(t *testing.T) {
 	}
 }
 
-func TestClaudeNotifierAppPath_ExtractsBundlePath(t *testing.T) {
-	notifierPath := filepath.Join(
-		string(filepath.Separator),
-		"tmp",
-		"plugin",
-		"bin",
-		"ClaudeNotifier.app",
-		"Contents",
-		"MacOS",
-		"terminal-notifier-modern",
-	)
-	appPath, ok := claudeNotifierAppPath(notifierPath)
-	if !ok {
-		t.Fatal("Expected ClaudeNotifier path to be recognized")
-	}
-	if filepath.Base(appPath) != "ClaudeNotifier.app" {
-		t.Fatalf("Expected app path to end with ClaudeNotifier.app, got %s", appPath)
-	}
-}
-
-func TestClaudeNotifierAppPath_IgnoresLegacyBinary(t *testing.T) {
-	notifierPath := filepath.Join(string(filepath.Separator), "usr", "local", "bin", "terminal-notifier")
-	if _, ok := claudeNotifierAppPath(notifierPath); ok {
-		t.Fatalf("Legacy terminal-notifier path should not be treated as ClaudeNotifier.app: %s", notifierPath)
-	}
-}
-
-func TestBuildNotifierCommand_UsesOpenForClaudeNotifier(t *testing.T) {
-	notifierPath := filepath.Join(
-		string(filepath.Separator),
-		"tmp",
-		"plugin",
-		"bin",
-		"ClaudeNotifier.app",
-		"Contents",
-		"MacOS",
-		"terminal-notifier-modern",
-	)
-
-	cmd := buildNotifierCommand(notifierPath, []string{"-title", "Test", "-message", "Hello"})
-	commandBase := strings.ToLower(filepath.Base(cmd.Path))
-	if commandBase != "open" && commandBase != "open.exe" {
-		t.Fatalf("Expected open command for ClaudeNotifier.app, got %s", cmd.Path)
-	}
-
-	if len(cmd.Args) < 8 {
-		t.Fatalf("Expected open command args with --args payload, got: %v", cmd.Args)
-	}
-	if cmd.Args[1] != "-W" || cmd.Args[2] != "-n" {
-		t.Fatalf("Expected open -W -n flags, got: %v", cmd.Args)
-	}
-	if cmd.Args[4] != "--args" {
-		t.Fatalf("Expected --args marker, got: %v", cmd.Args)
-	}
-	if cmd.Args[5] != "-launchedViaLaunchServices" {
-		t.Fatalf("Expected LaunchServices marker arg, got: %v", cmd.Args)
-	}
-}
-
-func TestBuildNotifierCommand_UsesDirectBinaryForLegacy(t *testing.T) {
-	notifierPath := filepath.Join(string(filepath.Separator), "usr", "local", "bin", "terminal-notifier")
-	cmd := buildNotifierCommand(notifierPath, []string{"-title", "Test"})
-	if cmd.Path != notifierPath {
-		t.Fatalf("Expected direct notifier path, got %s", cmd.Path)
-	}
-	if len(cmd.Args) < 2 || cmd.Args[0] != notifierPath {
-		t.Fatalf("Unexpected command args: %v", cmd.Args)
-	}
-}
-
 // === Additional coverage tests ===
 
 func TestSendWithTerminalNotifier_PathNotFound(t *testing.T) {
@@ -839,7 +767,7 @@ func TestSendDesktop_AppIconNotFound(t *testing.T) {
 	n := New(cfg)
 
 	// Should handle missing icon gracefully
-	err := n.SendDesktop(notification.Event{Status: analyzer.StatusTaskComplete, Body: "[test] Icon test", SessionID: "", CWD: ""})
+	err := n.SendDesktop(analyzer.StatusTaskComplete, "[test] Icon test", "", "")
 	// Error acceptable in CI
 	_ = err
 }
@@ -853,7 +781,7 @@ func TestSendDesktop_EmptyMessage(t *testing.T) {
 	n := New(cfg)
 
 	// Empty message should still work
-	err := n.SendDesktop(notification.Event{Status: analyzer.StatusTaskComplete, Body: "", SessionID: "", CWD: ""})
+	err := n.SendDesktop(analyzer.StatusTaskComplete, "", "", "")
 	// Error acceptable in CI
 	_ = err
 }
@@ -868,7 +796,7 @@ func TestSendDesktop_VeryLongMessage(t *testing.T) {
 
 	// Very long message
 	longMessage := "[test-session] " + strings.Repeat("This is a very long message. ", 100)
-	err := n.SendDesktop(notification.Event{Status: analyzer.StatusTaskComplete, Body: longMessage, SessionID: "", CWD: ""})
+	err := n.SendDesktop(analyzer.StatusTaskComplete, longMessage, "", "")
 	// Error acceptable in CI
 	_ = err
 }
@@ -883,7 +811,7 @@ func TestSendDesktop_SpecialCharactersInMessage(t *testing.T) {
 
 	// Message with special characters
 	specialMessage := "[test] Message with \"quotes\", 'apostrophes', <brackets>, & ampersand, \n newline"
-	err := n.SendDesktop(notification.Event{Status: analyzer.StatusTaskComplete, Body: specialMessage, SessionID: "", CWD: ""})
+	err := n.SendDesktop(analyzer.StatusTaskComplete, specialMessage, "", "")
 	// Error acceptable in CI
 	_ = err
 }
@@ -898,7 +826,7 @@ func TestSendDesktop_UnicodeMessage(t *testing.T) {
 
 	// Unicode message
 	unicodeMessage := "[тест] Сообщение на русском 你好 🎉 émojis"
-	err := n.SendDesktop(notification.Event{Status: analyzer.StatusTaskComplete, Body: unicodeMessage, SessionID: "", CWD: ""})
+	err := n.SendDesktop(analyzer.StatusTaskComplete, unicodeMessage, "", "")
 	// Error acceptable in CI
 	_ = err
 }
@@ -961,7 +889,7 @@ func TestSendDesktop_CallsBell(t *testing.T) {
 	n := New(cfg)
 
 	// Should not panic — bell is sent, then returns nil for disabled desktop
-	err := n.SendDesktop(notification.Event{Status: analyzer.StatusTaskComplete, Body: "test message", SessionID: "", CWD: ""})
+	err := n.SendDesktop(analyzer.StatusTaskComplete, "test message", "", "")
 	if err != nil {
 		t.Errorf("Expected nil error when disabled, got: %v", err)
 	}
@@ -977,7 +905,7 @@ func TestSendDesktop_BellDisabledByConfig(t *testing.T) {
 	n := New(cfg)
 
 	// Should not panic — bell is skipped, then returns nil for disabled desktop
-	err := n.SendDesktop(notification.Event{Status: analyzer.StatusTaskComplete, Body: "test message", SessionID: "", CWD: ""})
+	err := n.SendDesktop(analyzer.StatusTaskComplete, "test message", "", "")
 	if err != nil {
 		t.Errorf("Expected nil error when disabled, got: %v", err)
 	}

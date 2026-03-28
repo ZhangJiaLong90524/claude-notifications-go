@@ -1471,6 +1471,13 @@ main() {
     fi
     echo -e "${GREEN}✓${NC} Ready to use!"
     echo ""
+    echo -e "${YELLOW}────────────────────────────────────────${NC}"
+    echo -e "${YELLOW}★${NC} ${BOLD}Boost your productivity${NC}"
+    echo -e "  Check out the advanced task manager for Claude"
+    echo -e "  with a convenient UI, from the creator of this plugin:"
+    echo -e "  ${GREEN}https://github.com/777genius/claude_agent_teams_ui${NC}"
+    echo -e "${YELLOW}────────────────────────────────────────${NC}"
+    echo ""
 }
 
 # Run main function

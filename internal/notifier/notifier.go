@@ -18,15 +18,12 @@ import (
 	"github.com/777genius/claude-notifications/internal/config"
 	"github.com/777genius/claude-notifications/internal/errorhandler"
 	"github.com/777genius/claude-notifications/internal/logging"
-	"github.com/777genius/claude-notifications/internal/notification"
-	"github.com/777genius/claude-notifications/internal/osc"
 	"github.com/777genius/claude-notifications/internal/platform"
 )
 
 // Notifier sends desktop notifications
 type Notifier struct {
 	cfg         *config.Config
-	oscSender   *osc.Sender
 	audioPlayer *audio.Player
 	playerInit  sync.Once
 	playerErr   error
@@ -37,13 +34,9 @@ type Notifier struct {
 
 // New creates a new notifier
 func New(cfg *config.Config) *Notifier {
-	n := &Notifier{cfg: cfg}
-	if cfg.IsOSCEnabled() {
-		n.oscSender = osc.New(osc.Config{
-			Format: cfg.Notifications.OSC.Format,
-		})
+	return &Notifier{
+		cfg: cfg,
 	}
-	return n
 }
 
 // isTimeSensitiveStatus returns true for statuses that should break through Focus Mode
@@ -59,12 +52,8 @@ func isTimeSensitiveStatus(status analyzer.Status) bool {
 // SendDesktop sends a desktop notification using beeep (cross-platform)
 // On macOS with clickToFocus enabled, uses terminal-notifier for click-to-focus support
 // On Linux with clickToFocus enabled, uses background daemon for click-to-focus support
-func (n *Notifier) SendDesktop(evt notification.Event) error {
-	// Transitional: rebuild legacy parameters from Event
-	status := evt.Status
-	message := notification.RenderEnhancedMessage(evt)
-	sessionID := evt.SessionID
-	cwd := evt.CWD
+// cwd is the working directory of the project; used for window-specific focus. May be empty.
+func (n *Notifier) SendDesktop(status analyzer.Status, message, sessionID, cwd string) error {
 	// Send terminal bell for terminal tab indicators (e.g. Ghostty, tmux)
 	if n.cfg.IsTerminalBellEnabled() {
 		sendTerminalBell()
@@ -145,15 +134,6 @@ func (n *Notifier) SendDesktop(evt notification.Event) error {
 	return n.sendWithBeeep(title, cleanMessage, appIcon, statusInfo.Sound)
 }
 
-// SendOSC sends an OSC terminal notification.
-// Returns nil silently if OSC is not configured.
-func (n *Notifier) SendOSC(evt notification.Event) error {
-	if n.oscSender == nil {
-		return nil
-	}
-	return n.oscSender.SendEvent(evt)
-}
-
 // sendWithTerminalNotifier sends notification via terminal-notifier on macOS
 // with click-to-focus support (clicking notification activates the terminal)
 func (n *Notifier) sendWithTerminalNotifier(title, message, subtitle, sessionID string, timeSensitive bool, cwd string) error {
@@ -188,7 +168,7 @@ func (n *Notifier) sendWithTerminalNotifier(title, message, subtitle, sessionID 
 	// Always suppress sound in Swift — Go manages sound via audio player
 	args = append(args, "-nosound")
 
-	cmd := buildNotifierCommand(notifierPath, args)
+	cmd := exec.Command(notifierPath, args...)
 
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -197,36 +177,6 @@ func (n *Notifier) sendWithTerminalNotifier(title, message, subtitle, sessionID 
 
 	logging.Debug("terminal-notifier executed: bundleID=%s", bundleID)
 	return nil
-}
-
-// buildNotifierCommand builds the execution command for a notifier binary.
-// ClaudeNotifier must be launched via LaunchServices (open -W -n ... --args)
-// so UNUserNotificationCenter gets a valid bundle proxy under hardened runtime.
-func buildNotifierCommand(notifierPath string, args []string) *exec.Cmd {
-	if appPath, ok := claudeNotifierAppPath(notifierPath); ok {
-		openArgs := []string{"-W", "-n", appPath, "--args", "-launchedViaLaunchServices"}
-		openArgs = append(openArgs, args...)
-		return exec.Command("open", openArgs...)
-	}
-	return exec.Command(notifierPath, args...)
-}
-
-// claudeNotifierAppPath extracts the ClaudeNotifier.app bundle path from the
-// embedded terminal-notifier-modern executable path.
-func claudeNotifierAppPath(notifierPath string) (string, bool) {
-	cleanPath := filepath.Clean(notifierPath)
-	suffix := filepath.Join("Contents", "MacOS", "terminal-notifier-modern")
-	if !strings.HasSuffix(cleanPath, suffix) {
-		return "", false
-	}
-
-	bundlePath := strings.TrimSuffix(cleanPath, suffix)
-	bundlePath = strings.TrimSuffix(bundlePath, string(filepath.Separator))
-	if !strings.HasSuffix(bundlePath, "ClaudeNotifier.app") {
-		return "", false
-	}
-
-	return bundlePath, true
 }
 
 // buildTerminalNotifierArgs constructs command-line arguments for terminal-notifier.
@@ -366,7 +316,7 @@ func SendQuickNotification(title, message, executeCmd string) error {
 			"-group", fmt.Sprintf("claude-quick-%d", time.Now().UnixNano()),
 			"-nosound",
 		)
-		if output, err := buildNotifierCommand(notifierPath, args).CombinedOutput(); err == nil {
+		if output, err := exec.Command(notifierPath, args...).CombinedOutput(); err == nil {
 			return nil
 		} else {
 			logging.Debug("terminal-notifier failed: %v, output: %s", err, string(output))
@@ -402,10 +352,6 @@ func (n *Notifier) sendWithBeeep(title, message, appIcon, sound string) error {
 
 	// Send notification using beeep with proper title and clean message
 	if err := beeep.Notify(title, message, appIcon); err != nil {
-		if platform.IsWindows() && !platform.IsToastEnabled(beeep.AppName) {
-			logging.Warn("Toast notifications may be disabled for %q. "+
-				"Check Settings > System > Notifications.", beeep.AppName)
-		}
 		logging.Error("beeep.Notify failed on %s: %v (AppName=%q, title=%q)", runtime.GOOS, err, beeep.AppName, title)
 		return err
 	}

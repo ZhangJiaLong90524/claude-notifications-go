@@ -5,16 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.35.0] - 2026-03-28
+## [1.36.0] - 2026-03-28
 
 ### Added
-- **OSC terminal notifications for SSH/tmux users** — terminal title updates are now sent via OSC escape sequences when running in SSH/tmux environments, improving tab/window visibility for active Claude sessions ([#58](https://github.com/777genius/claude-notifications-go/pull/58))
+- **Team mode support** — smart notification handling for Claude Code teams ([#48](https://github.com/777genius/claude-notifications-go/issues/48)). New `teamMode` config option with three modes:
+  - `always` (default) — notifications work as usual, no suppression
+  - `wait-all` — suppresses lead's Stop notification, waits until all teammates go idle, then sends a single consolidated notification
+  - `never` — completely silent in team mode
+- **TeammateIdle hook** — new hook event for tracking when team members finish their work
+- **Install script promo** — shows link to [claude_agent_teams_ui](https://github.com/777genius/claude_agent_teams_ui) after installation
 
-### Fixed
-- **macOS ClaudeNotifier production signing** — restored Developer ID signing with hardened runtime and notarization in release CI, including runtime-safe launch behavior and dedicated smoke validation workflow ([#60](https://github.com/777genius/claude-notifications-go/pull/60), [#59](https://github.com/777genius/claude-notifications-go/issues/59))
-- **Windows toast diagnostics on failure** — improved diagnostics when Windows notifications are disabled or rejected, making root-cause detection clearer ([#57](https://github.com/777genius/claude-notifications-go/pull/57))
-- **Question notification dedup suppression** — question status events now bypass content-based dedup lock to avoid legitimate question notifications being dropped ([#56](https://github.com/777genius/claude-notifications-go/pull/56))
-- **Unknown status passthrough** — unknown status notifications are preserved instead of being dropped in status normalization paths
+### Removed
+- **OSC terminal notifications** — removed the `internal/osc` package (OSC escape sequences for SSH/tmux). Feature proved unreliable across terminal emulators
+- **Platform-specific toast helpers** — removed Windows toast and cross-platform toast abstractions in favor of simpler direct notification calls
+
+### Changed
+- Simplified ClaudeNotifier.app build pipeline and entitlements
+- Streamlined notifier and hook handler internals
 
 ## [1.34.1] - 2026-03-26
 

@@ -15,8 +15,8 @@ import (
 	"github.com/777genius/claude-notifications/internal/analyzer"
 	"github.com/777genius/claude-notifications/internal/config"
 	"github.com/777genius/claude-notifications/internal/dedup"
-	"github.com/777genius/claude-notifications/internal/notification"
 	"github.com/777genius/claude-notifications/internal/state"
+	"github.com/777genius/claude-notifications/internal/teamstate"
 	"github.com/777genius/claude-notifications/pkg/jsonl"
 )
 
@@ -33,26 +33,27 @@ func setTestHome(t *testing.T, dir string) {
 // === Mock Notifier ===
 
 type mockNotifier struct {
-	mu           sync.Mutex
-	desktopCalls []notification.Event
-	oscCalls     []notification.Event
-	shouldFail   bool
+	mu         sync.Mutex
+	calls      []notificationCall
+	shouldFail bool
 }
 
-func (m *mockNotifier) SendDesktop(evt notification.Event) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.desktopCalls = append(m.desktopCalls, evt)
-	if m.shouldFail {
-		return errors.New("mock error")
-	}
-	return nil
+type notificationCall struct {
+	status  analyzer.Status
+	message string
+	cwd     string
 }
 
-func (m *mockNotifier) SendOSC(evt notification.Event) error {
+func (m *mockNotifier) SendDesktop(status analyzer.Status, message, sessionID, cwd string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.oscCalls = append(m.oscCalls, evt)
+
+	m.calls = append(m.calls, notificationCall{
+		status:  status,
+		message: message,
+		cwd:     cwd,
+	})
+
 	if m.shouldFail {
 		return errors.New("mock error")
 	}
@@ -66,35 +67,22 @@ func (m *mockNotifier) Close() error {
 func (m *mockNotifier) wasCalled() bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return len(m.desktopCalls) > 0 || len(m.oscCalls) > 0
-}
-
-func (m *mockNotifier) desktopWasCalled() bool {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return len(m.desktopCalls) > 0
-}
-
-func (m *mockNotifier) oscWasCalled() bool {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return len(m.oscCalls) > 0
+	return len(m.calls) > 0
 }
 
 func (m *mockNotifier) callCount() int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return len(m.desktopCalls) + len(m.oscCalls)
+	return len(m.calls)
 }
 
-func (m *mockNotifier) lastDesktopCall() *notification.Event {
+func (m *mockNotifier) lastCall() *notificationCall {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if len(m.desktopCalls) == 0 {
+	if len(m.calls) == 0 {
 		return nil
 	}
-	evt := m.desktopCalls[len(m.desktopCalls)-1]
-	return &evt
+	return &m.calls[len(m.calls)-1]
 }
 
 // === Mock Webhook ===
@@ -251,12 +239,13 @@ func newTestHandler(t *testing.T, cfg *config.Config) (*Handler, *mockNotifier, 
 	mockWH := &mockWebhook{}
 
 	handler := &Handler{
-		cfg:         cfg,
-		dedupMgr:    dedup.NewManager(),
-		stateMgr:    state.NewManager(),
-		notifierSvc: mockNotif,
-		webhookSvc:  mockWH,
-		pluginRoot:  t.TempDir(),
+		cfg:          cfg,
+		dedupMgr:     dedup.NewManager(),
+		stateMgr:     state.NewManager(),
+		teamStateMgr: teamstate.NewManager(""),
+		notifierSvc:  mockNotif,
+		webhookSvc:   mockWH,
+		pluginRoot:   t.TempDir(),
 	}
 
 	return handler, mockNotif, mockWH
@@ -292,13 +281,13 @@ func TestHandler_PreToolUse_ExitPlanMode(t *testing.T) {
 		t.Error("expected notification to be sent")
 	}
 
-	call := mockNotif.lastDesktopCall()
+	call := mockNotif.lastCall()
 	if call == nil {
 		t.Fatal("no notification sent")
 	}
 
-	if call.Status != analyzer.StatusPlanReady {
-		t.Errorf("got status %v, want StatusPlanReady", call.Status)
+	if call.status != analyzer.StatusPlanReady {
+		t.Errorf("got status %v, want StatusPlanReady", call.status)
 	}
 }
 
@@ -330,9 +319,9 @@ func TestHandler_PreToolUse_AskUserQuestion(t *testing.T) {
 		t.Error("expected notification to be sent")
 	}
 
-	call := mockNotif.lastDesktopCall()
-	if call.Status != analyzer.StatusQuestion {
-		t.Errorf("got status %v, want StatusQuestion", call.Status)
+	call := mockNotif.lastCall()
+	if call.status != analyzer.StatusQuestion {
+		t.Errorf("got status %v, want StatusQuestion", call.status)
 	}
 }
 
@@ -368,9 +357,9 @@ func TestHandler_Stop_ReviewComplete(t *testing.T) {
 		t.Error("expected notification to be sent")
 	}
 
-	call := mockNotif.lastDesktopCall()
-	if call.Status != analyzer.StatusReviewComplete {
-		t.Errorf("got status %v, want StatusReviewComplete", call.Status)
+	call := mockNotif.lastCall()
+	if call.status != analyzer.StatusReviewComplete {
+		t.Errorf("got status %v, want StatusReviewComplete", call.status)
 	}
 }
 
@@ -406,9 +395,9 @@ func TestHandler_Stop_TaskComplete(t *testing.T) {
 		t.Error("expected notification to be sent")
 	}
 
-	call := mockNotif.lastDesktopCall()
-	if call.Status != analyzer.StatusTaskComplete {
-		t.Errorf("got status %v, want StatusTaskComplete", call.Status)
+	call := mockNotif.lastCall()
+	if call.status != analyzer.StatusTaskComplete {
+		t.Errorf("got status %v, want StatusTaskComplete", call.status)
 	}
 }
 
@@ -511,62 +500,6 @@ func TestHandler_EarlyDuplicateCheck(t *testing.T) {
 	// Should not send duplicate
 	if mockNotif.callCount() > firstCallCount {
 		t.Error("Duplicate hook should be suppressed by early check")
-	}
-}
-
-func TestHandler_ConsecutiveNotifications_SkipsContentDedup(t *testing.T) {
-	cfg := &config.Config{
-		Notifications: config.NotificationsConfig{
-			Desktop: config.DesktopConfig{Enabled: true},
-			SuppressQuestionAfterAnyNotificationSeconds: intPtr(0), // disable cooldown for this test
-			SuppressQuestionAfterTaskCompleteSeconds:    intPtr(0),
-		},
-		Statuses: map[string]config.StatusInfo{
-			"question": {Title: "Question"},
-		},
-	}
-
-	handler, mockNotif, _ := newTestHandler(t, cfg)
-
-	// First Notification hook (permission prompt #1)
-	hookData1 := buildHookDataJSON(HookData{
-		SessionID: "test-consecutive-notif",
-		CWD:       "/test",
-	})
-
-	err := handler.HandleHook("Notification", hookData1)
-	if err != nil {
-		t.Fatalf("first notification error: %v", err)
-	}
-
-	firstCallCount := mockNotif.callCount()
-	if firstCallCount == 0 {
-		t.Fatal("first notification should be sent")
-	}
-
-	// Wait for per-hook dedup lock to expire (2s TTL) so the second
-	// notification is not blocked by the early duplicate check.
-	// It should still be within the 180s content dedup window.
-	time.Sleep(2100 * time.Millisecond)
-
-	// Second Notification hook with same session (permission prompt #2).
-	// This generates identical summary because the transcript hasn't changed.
-	hookData2 := buildHookDataJSON(HookData{
-		SessionID: "test-consecutive-notif",
-		CWD:       "/test",
-	})
-
-	err = handler.HandleHook("Notification", hookData2)
-	if err != nil {
-		t.Fatalf("second notification error: %v", err)
-	}
-
-	// Second notification must NOT be suppressed by content dedup.
-	// Question status skips content dedup because consecutive permission
-	// prompts are distinct user-facing events with identical summaries.
-	if mockNotif.callCount() <= firstCallCount {
-		t.Errorf("second question notification should not be suppressed by content dedup, got %d calls, want > %d",
-			mockNotif.callCount(), firstCallCount)
 	}
 }
 
@@ -2002,168 +1935,319 @@ func TestHandler_SuppressFilter_NonMatchingFilter_SendsNotification(t *testing.T
 	}
 }
 
-func TestSendNotifications_OSCFires(t *testing.T) {
-	t.Setenv("SSH_CONNECTION", "1.2.3.4 5678 5.6.7.8 22")
-	cfg := config.DefaultConfig()
-	cfg.Notifications.Desktop.Enabled = false
-	cfg.Notifications.Webhook.Enabled = false
-	// OSC.Enabled is nil (auto) -> should detect SSH and enable
-	handler, mockNotif, _ := newTestHandler(t, cfg)
+// === Team Mode Tests ===
 
-	transcript := buildTranscriptWithTools([]string{"Write"}, 100)
-	transcriptPath := createTempTranscript(t, transcript)
+// setupTeamConfig creates a team config in the temp dir and returns the HOME dir path.
+// Teams are created at HOME/.claude/teams/ to match the real layout.
+func setupTeamConfig(t *testing.T, teamName, leadSessionID string, memberNames []string) string {
+	t.Helper()
 
-	err := handler.HandleHook("Stop", buildHookDataJSON(HookData{
-		TranscriptPath: transcriptPath,
-		SessionID:      "test-osc-1",
-		CWD:            t.TempDir(),
-	}))
-	if err != nil {
-		t.Fatalf("HandleHook unexpected error: %v", err)
+	tmpHome := t.TempDir()
+	teamsDir := filepath.Join(tmpHome, ".claude", "teams", teamName)
+	if err := os.MkdirAll(teamsDir, 0755); err != nil {
+		t.Fatal(err)
 	}
 
-	if !mockNotif.oscWasCalled() {
-		t.Fatal("expected OSC notification to fire in SSH session")
+	type member struct {
+		AgentID   string `json:"agentId"`
+		Name      string `json:"name"`
+		AgentType string `json:"agentType"`
 	}
+	type teamCfg struct {
+		Name          string   `json:"name"`
+		LeadSessionID string   `json:"leadSessionId"`
+		Members       []member `json:"members"`
+	}
+
+	members := []member{
+		{AgentID: "team-lead@" + teamName, Name: "team-lead", AgentType: "team-lead"},
+	}
+	for _, n := range memberNames {
+		members = append(members, member{
+			AgentID:   n + "@" + teamName,
+			Name:      n,
+			AgentType: "general-purpose",
+		})
+	}
+
+	cfg := teamCfg{
+		Name:          teamName,
+		LeadSessionID: leadSessionID,
+		Members:       members,
+	}
+	data, _ := json.Marshal(cfg)
+	if err := os.WriteFile(filepath.Join(teamsDir, "config.json"), data, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	return tmpHome
 }
 
-func TestSendNotifications_OSCDisabledWithoutSSH(t *testing.T) {
-	t.Setenv("SSH_CONNECTION", "")
-	t.Setenv("SSH_CLIENT", "")
-	t.Setenv("SSH_TTY", "")
-	cfg := config.DefaultConfig()
-	cfg.Notifications.Desktop.Enabled = false
-	cfg.Notifications.Webhook.Enabled = false
-	// OSC.Enabled is nil (auto) -> no SSH, should not enable
+func TestHandler_Stop_TeamMode_Smart_SuppressesLeadStop(t *testing.T) {
+	sessionID := "test-team-lead-session"
+	claudeDir := setupTeamConfig(t, "test-smart-team", sessionID, []string{"alice", "bob"})
+	setTestHome(t, claudeDir)
 
-	handler, mockNotif, _ := newTestHandler(t, cfg)
+	messages := buildTranscriptWithTools([]string{"Write"}, 50)
+	transcriptPath := createTempTranscript(t, messages)
 
-	transcript := buildTranscriptWithTools([]string{"Write"}, 100)
-	transcriptPath := createTempTranscript(t, transcript)
-
-	err := handler.HandleHook("Stop", buildHookDataJSON(HookData{
-		TranscriptPath: transcriptPath,
-		SessionID:      "test-osc-2",
-		CWD:            t.TempDir(),
-	}))
-	if err != nil {
-		t.Fatalf("HandleHook unexpected error: %v", err)
+	cfg := &config.Config{
+		Notifications: config.NotificationsConfig{
+			Desktop:  config.DesktopConfig{Enabled: true},
+			TeamMode: "wait-all",
+		},
+		Statuses: map[string]config.StatusInfo{
+			"task_complete": {Title: "Completed"},
+		},
 	}
-
-	if mockNotif.oscWasCalled() {
-		t.Fatal("OSC should NOT fire without SSH session")
-	}
-}
-
-func TestSendNotifications_DesktopAndOSCIndependent(t *testing.T) {
-	t.Setenv("SSH_CONNECTION", "1.2.3.4 5678 5.6.7.8 22")
-	cfg := config.DefaultConfig()
-	cfg.Notifications.Desktop.Enabled = true
-	cfg.Notifications.Webhook.Enabled = false
-	// OSC.Enabled is nil (auto) -> SSH detected, both desktop and OSC should fire
-
-	handler, mockNotif, _ := newTestHandler(t, cfg)
-
-	transcript := buildTranscriptWithTools([]string{"Write"}, 100)
-	transcriptPath := createTempTranscript(t, transcript)
-
-	err := handler.HandleHook("Stop", buildHookDataJSON(HookData{
-		TranscriptPath: transcriptPath,
-		SessionID:      "test-both-1",
-		CWD:            t.TempDir(),
-	}))
-	if err != nil {
-		t.Fatalf("HandleHook unexpected error: %v", err)
-	}
-
-	if !mockNotif.desktopWasCalled() {
-		t.Error("expected Desktop notification to fire")
-	}
-	if !mockNotif.oscWasCalled() {
-		t.Error("expected OSC notification to fire alongside Desktop")
-	}
-}
-
-func TestSendNotifications_OSCExplicitEnabled(t *testing.T) {
-	t.Setenv("SSH_CONNECTION", "")
-	t.Setenv("SSH_CLIENT", "")
-	t.Setenv("SSH_TTY", "")
-	cfg := config.DefaultConfig()
-	cfg.Notifications.Desktop.Enabled = false
-	cfg.Notifications.Webhook.Enabled = false
-	enabled := true
-	cfg.Notifications.OSC.Enabled = &enabled
 
 	handler, mockNotif, _ := newTestHandler(t, cfg)
 
-	transcript := buildTranscriptWithTools([]string{"Write"}, 100)
-	transcriptPath := createTempTranscript(t, transcript)
-
-	err := handler.HandleHook("Stop", buildHookDataJSON(HookData{
+	hookData := buildHookDataJSON(HookData{
+		SessionID:      sessionID,
 		TranscriptPath: transcriptPath,
-		SessionID:      "test-explicit-1",
-		CWD:            t.TempDir(),
-	}))
+		CWD:            "/test",
+	})
+
+	err := handler.HandleHook("Stop", hookData)
 	if err != nil {
-		t.Fatalf("HandleHook unexpected error: %v", err)
+		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if !mockNotif.oscWasCalled() {
-		t.Fatal("expected OSC notification with explicit enabled=true even without SSH")
+	if mockNotif.wasCalled() {
+		t.Error("expected notification to be suppressed for team lead in smart mode")
 	}
 }
 
-func TestSendNotifications_OSCExplicitDisabled(t *testing.T) {
-	t.Setenv("SSH_CONNECTION", "1.2.3.4 5678 5.6.7.8 22")
-	cfg := config.DefaultConfig()
-	cfg.Notifications.Desktop.Enabled = false
-	cfg.Notifications.Webhook.Enabled = false
-	disabled := false
-	cfg.Notifications.OSC.Enabled = &disabled
+func TestHandler_Stop_TeamMode_Always_DoesNotSuppress(t *testing.T) {
+	sessionID := "test-team-always-session"
+	claudeDir := setupTeamConfig(t, "test-always-team", sessionID, []string{"alice"})
+	setTestHome(t, claudeDir)
+
+	messages := buildTranscriptWithTools([]string{"Write"}, 50)
+	transcriptPath := createTempTranscript(t, messages)
+
+	cfg := &config.Config{
+		Notifications: config.NotificationsConfig{
+			Desktop:  config.DesktopConfig{Enabled: true},
+			TeamMode: "always",
+		},
+		Statuses: map[string]config.StatusInfo{
+			"task_complete": {Title: "Completed"},
+		},
+	}
 
 	handler, mockNotif, _ := newTestHandler(t, cfg)
 
-	transcript := buildTranscriptWithTools([]string{"Write"}, 100)
-	transcriptPath := createTempTranscript(t, transcript)
-
-	err := handler.HandleHook("Stop", buildHookDataJSON(HookData{
+	hookData := buildHookDataJSON(HookData{
+		SessionID:      sessionID,
 		TranscriptPath: transcriptPath,
-		SessionID:      "test-explicit-2",
-		CWD:            t.TempDir(),
-	}))
+		CWD:            "/test",
+	})
+
+	err := handler.HandleHook("Stop", hookData)
 	if err != nil {
-		t.Fatalf("HandleHook unexpected error: %v", err)
+		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if mockNotif.oscWasCalled() {
-		t.Fatal("OSC should NOT fire with explicit enabled=false even with SSH")
+	if !mockNotif.wasCalled() {
+		t.Error("expected notification in 'always' team mode")
+	}
+}
+
+func TestHandler_Stop_TeamMode_Never_Suppresses(t *testing.T) {
+	sessionID := "test-team-never-session"
+	claudeDir := setupTeamConfig(t, "test-never-team", sessionID, []string{"alice"})
+	setTestHome(t, claudeDir)
+
+	messages := buildTranscriptWithTools([]string{"Write"}, 50)
+	transcriptPath := createTempTranscript(t, messages)
+
+	cfg := &config.Config{
+		Notifications: config.NotificationsConfig{
+			Desktop:  config.DesktopConfig{Enabled: true},
+			TeamMode: "never",
+		},
+		Statuses: map[string]config.StatusInfo{
+			"task_complete": {Title: "Completed"},
+		},
+	}
+
+	handler, mockNotif, _ := newTestHandler(t, cfg)
+
+	hookData := buildHookDataJSON(HookData{
+		SessionID:      sessionID,
+		TranscriptPath: transcriptPath,
+		CWD:            "/test",
+	})
+
+	err := handler.HandleHook("Stop", hookData)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if mockNotif.wasCalled() {
+		t.Error("expected notification to be suppressed in 'never' team mode")
 	}
 }
 
-func TestSendNotifications_UnknownStatusStillSends(t *testing.T) {
-	cfg := config.DefaultConfig()
-	cfg.Notifications.Desktop.Enabled = false
-	cfg.Notifications.Webhook.Enabled = true
-	enabled := true
-	cfg.Notifications.OSC.Enabled = &enabled
+func TestHandler_Stop_TeamMode_Smart_NotifiesWhenAllIdle(t *testing.T) {
+	sessionID := "test-team-allidle-session"
+	teamName := "test-allidle-team"
+	claudeDir := setupTeamConfig(t, teamName, sessionID, []string{"alice"})
+	setTestHome(t, claudeDir)
 
-	handler, mockNotif, mockWH := newTestHandler(t, cfg)
-	status := analyzer.Status("custom_status")
+	messages := buildTranscriptWithTools([]string{"Write"}, 50)
+	transcriptPath := createTempTranscript(t, messages)
 
-	handler.sendNotifications(status, "Custom body", "test-unknown-1", t.TempDir())
-
-	if !mockWH.wasCalled() {
-		t.Fatal("expected webhook notification for unknown status")
+	cfg := &config.Config{
+		Notifications: config.NotificationsConfig{
+			Desktop:  config.DesktopConfig{Enabled: true},
+			TeamMode: "wait-all",
+		},
+		Statuses: map[string]config.StatusInfo{
+			"task_complete": {Title: "Completed"},
+		},
 	}
-	if !mockNotif.oscWasCalled() {
-		t.Fatal("expected OSC notification for unknown status")
+
+	handler, mockNotif, _ := newTestHandler(t, cfg)
+
+	// Pre-record alice as idle (simulates TeammateIdle having fired already)
+	teamMgr := setupTeamStateManager(t, claudeDir)
+	teamMgr.RecordTeammateIdle(teamName, "alice")
+
+	hookData := buildHookDataJSON(HookData{
+		SessionID:      sessionID,
+		TranscriptPath: transcriptPath,
+		CWD:            "/test",
+	})
+
+	err := handler.HandleHook("Stop", hookData)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
 
-	call := mockNotif.oscCalls[len(mockNotif.oscCalls)-1]
-	if call.Title != "custom_status" {
-		t.Fatalf("expected fallback title %q, got %q", "custom_status", call.Title)
-	}
-	if call.Status != status {
-		t.Fatalf("expected status %q, got %q", status, call.Status)
+	if !mockNotif.wasCalled() {
+		t.Error("expected notification when lead stops and all teammates are idle")
 	}
 }
+
+func TestHandler_TeammateIdle_SendsWhenAllReady(t *testing.T) {
+	sessionID := "test-ti-session"
+	teamName := "test-ti-team"
+	claudeDir := setupTeamConfig(t, teamName, sessionID, []string{"alice", "bob"})
+	setTestHome(t, claudeDir)
+
+	cfg := &config.Config{
+		Notifications: config.NotificationsConfig{
+			Desktop:  config.DesktopConfig{Enabled: true},
+			TeamMode: "wait-all",
+		},
+		Statuses: map[string]config.StatusInfo{
+			"task_complete": {Title: "Completed"},
+		},
+	}
+
+	handler, mockNotif, _ := newTestHandler(t, cfg)
+
+	// Pre-record: lead stopped + alice already idle
+	teamMgr := setupTeamStateManager(t, claudeDir)
+	teamMgr.RecordLeadStopped(teamName)
+	teamMgr.RecordTeammateIdle(teamName, "alice")
+
+	// Now bob goes idle → should trigger notification
+	hookData := buildHookDataJSON(HookData{
+		SessionID:    sessionID,
+		TeamName:     teamName,
+		TeammateName: "bob",
+		CWD:          "/test",
+	})
+
+	err := handler.HandleHook("TeammateIdle", hookData)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !mockNotif.wasCalled() {
+		t.Error("expected notification when last teammate goes idle and lead has stopped")
+	}
+}
+
+func TestHandler_TeammateIdle_DoesNotSendWhenLeadNotStopped(t *testing.T) {
+	sessionID := "test-ti-nosend-session"
+	teamName := "test-ti-nosend-team"
+	claudeDir := setupTeamConfig(t, teamName, sessionID, []string{"alice"})
+	setTestHome(t, claudeDir)
+
+	cfg := &config.Config{
+		Notifications: config.NotificationsConfig{
+			Desktop:  config.DesktopConfig{Enabled: true},
+			TeamMode: "wait-all",
+		},
+		Statuses: map[string]config.StatusInfo{
+			"task_complete": {Title: "Completed"},
+		},
+	}
+
+	handler, mockNotif, _ := newTestHandler(t, cfg)
+
+	// Lead has NOT stopped — alice goes idle
+	hookData := buildHookDataJSON(HookData{
+		SessionID:    sessionID,
+		TeamName:     teamName,
+		TeammateName: "alice",
+		CWD:          "/test",
+	})
+
+	err := handler.HandleHook("TeammateIdle", hookData)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if mockNotif.wasCalled() {
+		t.Error("expected no notification when lead has not stopped")
+	}
+}
+
+func TestHandler_Stop_NonTeamLead_NormalBehavior(t *testing.T) {
+	// A session that is NOT a team lead should get normal notification behavior
+	claudeDir := setupTeamConfig(t, "other-team", "different-session-id", []string{"alice"})
+	setTestHome(t, claudeDir)
+
+	messages := buildTranscriptWithTools([]string{"Write"}, 50)
+	transcriptPath := createTempTranscript(t, messages)
+
+	cfg := &config.Config{
+		Notifications: config.NotificationsConfig{
+			Desktop:  config.DesktopConfig{Enabled: true},
+			TeamMode: "wait-all",
+		},
+		Statuses: map[string]config.StatusInfo{
+			"task_complete": {Title: "Completed"},
+		},
+	}
+
+	handler, mockNotif, _ := newTestHandler(t, cfg)
+
+	hookData := buildHookDataJSON(HookData{
+		SessionID:      "test-nonlead-session-1",
+		TranscriptPath: transcriptPath,
+		CWD:            "/test",
+	})
+
+	err := handler.HandleHook("Stop", hookData)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !mockNotif.wasCalled() {
+		t.Error("expected notification for non-team-lead session")
+	}
+}
+
+// setupTeamStateManager creates a teamstate.Manager pointing to the given home dir's .claude.
+func setupTeamStateManager(t *testing.T, homeDir string) *teamstate.Manager {
+	t.Helper()
+	return teamstate.NewManager(filepath.Join(homeDir, ".claude"))
+}
+

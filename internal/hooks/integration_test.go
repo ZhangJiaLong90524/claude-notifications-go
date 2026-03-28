@@ -72,9 +72,9 @@ func TestE2E_FullNotificationCycle(t *testing.T) {
 	if !mockNotif.wasCalled() {
 		t.Fatal("Expected plan_ready notification")
 	}
-	call1 := mockNotif.lastDesktopCall()
-	if call1.Status != analyzer.StatusPlanReady {
-		t.Errorf("Expected StatusPlanReady, got %v", call1.Status)
+	call1 := mockNotif.lastCall()
+	if call1.status != analyzer.StatusPlanReady {
+		t.Errorf("Expected StatusPlanReady, got %v", call1.status)
 	}
 
 	initialCallCount := mockNotif.callCount()
@@ -154,12 +154,12 @@ func TestE2E_FullNotificationCycle(t *testing.T) {
 		t.Errorf("Expected at least %d notifications, got %d", expectedMin, finalCallCount)
 	}
 
-	lastCall := mockNotif.lastDesktopCall()
+	lastCall := mockNotif.lastCall()
 	if lastCall == nil {
 		t.Fatal("No notifications sent")
 	}
-	if lastCall.Status != analyzer.StatusTaskComplete {
-		t.Errorf("Last notification: expected StatusTaskComplete, got %v", lastCall.Status)
+	if lastCall.status != analyzer.StatusTaskComplete {
+		t.Errorf("Last notification: expected StatusTaskComplete, got %v", lastCall.status)
 	}
 	t.Logf("✓ Phase 4 complete: task_complete sent (call #%d)", finalCallCount)
 
@@ -459,20 +459,20 @@ func TestE2E_CodeReviewWorkflow(t *testing.T) {
 		t.Fatal("Expected review_complete notification")
 	}
 
-	call := mockNotif.lastDesktopCall()
-	if call.Status != analyzer.StatusReviewComplete {
-		t.Errorf("Expected StatusReviewComplete, got %v", call.Status)
+	call := mockNotif.lastCall()
+	if call.status != analyzer.StatusReviewComplete {
+		t.Errorf("Expected StatusReviewComplete, got %v", call.status)
 	}
 
 	// Message should mention review/analysis
-	if !contains(call.Body, "review") && !contains(call.Body, "Reviewed") {
-		t.Logf("INFO: Review message: %s", call.Body)
+	if !contains(call.message, "review") && !contains(call.message, "Reviewed") {
+		t.Logf("INFO: Review message: %s", call.message)
 		// Not critical - just log
 	}
 
 	t.Logf("✓ E2E Code Review Workflow complete")
-	t.Logf("  Status: %v", call.Status)
-	t.Logf("  Message: %s", call.Body)
+	t.Logf("  Status: %v", call.status)
+	t.Logf("  Message: %s", call.message)
 }
 
 // === E2E Test: Fix and Test Workflow ===
@@ -517,20 +517,20 @@ func TestE2E_FixAndTestWorkflow(t *testing.T) {
 		t.Fatal("Expected task_complete notification")
 	}
 
-	call := mockNotif.lastDesktopCall()
-	if call.Status != analyzer.StatusTaskComplete {
-		t.Errorf("Expected StatusTaskComplete, got %v", call.Status)
+	call := mockNotif.lastCall()
+	if call.status != analyzer.StatusTaskComplete {
+		t.Errorf("Expected StatusTaskComplete, got %v", call.status)
 	}
 
 	// Message should mention edits and command
-	if !contains(call.Body, "edited") && !contains(call.Body, "cmds") {
-		t.Logf("INFO: Task message might not include action summary: %s", call.Body)
+	if !contains(call.message, "edited") && !contains(call.message, "cmds") {
+		t.Logf("INFO: Task message might not include action summary: %s", call.message)
 		// Not critical - implementation may vary
 	}
 
 	t.Logf("✓ E2E Fix and Test Workflow complete")
-	t.Logf("  Status: %v", call.Status)
-	t.Logf("  Message: %s", call.Body)
+	t.Logf("  Status: %v", call.status)
+	t.Logf("  Message: %s", call.message)
 }
 
 // === E2E Test: Webhook Graceful Shutdown ===

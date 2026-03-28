@@ -15,12 +15,12 @@ import (
 	"github.com/777genius/claude-notifications/internal/dedup"
 	"github.com/777genius/claude-notifications/internal/errorhandler"
 	"github.com/777genius/claude-notifications/internal/logging"
-	"github.com/777genius/claude-notifications/internal/notification"
 	"github.com/777genius/claude-notifications/internal/notifier"
 	"github.com/777genius/claude-notifications/internal/platform"
 	"github.com/777genius/claude-notifications/internal/sessionname"
 	"github.com/777genius/claude-notifications/internal/state"
 	"github.com/777genius/claude-notifications/internal/summary"
+	"github.com/777genius/claude-notifications/internal/teamstate"
 	"github.com/777genius/claude-notifications/internal/webhook"
 	"github.com/777genius/claude-notifications/pkg/jsonl"
 )
@@ -32,12 +32,14 @@ type HookData struct {
 	CWD            string `json:"cwd"`
 	ToolName       string `json:"tool_name,omitempty"`
 	HookEventName  string `json:"hook_event_name,omitempty"`
+	// Team-related fields (present in TeammateIdle, TaskCreated, TaskCompleted hooks)
+	TeamName     string `json:"team_name,omitempty"`
+	TeammateName string `json:"teammate_name,omitempty"`
 }
 
-// notifierInterface defines the interface for sending notifications
+// notifierInterface defines the interface for sending desktop notifications
 type notifierInterface interface {
-	SendDesktop(evt notification.Event) error
-	SendOSC(evt notification.Event) error
+	SendDesktop(status analyzer.Status, message, sessionID, cwd string) error
 	Close() error
 }
 
@@ -49,12 +51,13 @@ type webhookInterface interface {
 
 // Handler handles hook events
 type Handler struct {
-	cfg         *config.Config
-	dedupMgr    *dedup.Manager
-	stateMgr    *state.Manager
-	notifierSvc notifierInterface
-	webhookSvc  webhookInterface
-	pluginRoot  string
+	cfg          *config.Config
+	dedupMgr     *dedup.Manager
+	stateMgr     *state.Manager
+	teamStateMgr *teamstate.Manager
+	notifierSvc  notifierInterface
+	webhookSvc   webhookInterface
+	pluginRoot   string
 }
 
 // NewHandler creates a new hook handler
@@ -71,12 +74,13 @@ func NewHandler(pluginRoot string) (*Handler, error) {
 	}
 
 	return &Handler{
-		cfg:         cfg,
-		dedupMgr:    dedup.NewManager(),
-		stateMgr:    state.NewManager(),
-		notifierSvc: notifier.New(cfg),
-		webhookSvc:  webhook.New(cfg),
-		pluginRoot:  pluginRoot,
+		cfg:          cfg,
+		dedupMgr:     dedup.NewManager(),
+		stateMgr:     state.NewManager(),
+		teamStateMgr: teamstate.NewManager(""),
+		notifierSvc:  notifier.New(cfg),
+		webhookSvc:   webhook.New(cfg),
+		pluginRoot:   pluginRoot,
 	}, nil
 }
 
@@ -174,6 +178,44 @@ func (h *Handler) HandleHook(hookEvent string, input io.Reader) error {
 			logging.Debug("Stop: subagent transcript detected (%s), suppressing (config: suppressForSubagents)", hookData.TranscriptPath)
 			return nil
 		}
+
+		// Team mode: check if this session is a team lead and suppress if needed
+		if h.cfg.GetTeamMode() == "wait-all" {
+			if teamInfo := h.teamStateMgr.DetectTeamLead(hookData.SessionID); teamInfo != nil {
+				logging.Debug("Stop: team lead detected for team %q (members: %d), checking team state",
+					teamInfo.TeamName, len(teamInfo.Members))
+
+				// Record that the lead has stopped
+				if err := h.teamStateMgr.RecordLeadStopped(teamInfo.TeamName); err != nil {
+					logging.Warn("Stop: failed to record lead stopped: %v", err)
+				}
+
+				// Check if all teammates are already idle
+				allIdle, err := h.teamStateMgr.CheckAllIdle(teamInfo.TeamName, teamInfo.Members)
+				if err != nil {
+					logging.Warn("Stop: failed to check team idle state: %v", err)
+				}
+
+				if !allIdle {
+					// Not all teammates idle yet — suppress notification, wait for TeammateIdle
+					logging.Debug("Stop: team %q has active teammates, suppressing notification", teamInfo.TeamName)
+					return nil
+				}
+
+				// All teammates are idle — proceed with notification and mark as notified
+				logging.Debug("Stop: team %q all teammates idle, sending notification", teamInfo.TeamName)
+				if err := h.teamStateMgr.MarkNotified(teamInfo.TeamName); err != nil {
+					logging.Warn("Stop: failed to mark team notified: %v", err)
+				}
+			}
+		} else if h.cfg.GetTeamMode() == "never" {
+			if teamInfo := h.teamStateMgr.DetectTeamLead(hookData.SessionID); teamInfo != nil {
+				logging.Debug("Stop: team mode is 'never', suppressing for team %q", teamInfo.TeamName)
+				return nil
+			}
+		}
+		// teamMode "always" or not a team lead: fall through to normal processing
+
 		// Analyze the transcript to determine status
 		bench.Start("stop.analyze")
 		status, parsedMessages, err = h.handleStopEvent(&hookData)
@@ -205,6 +247,8 @@ func (h *Handler) HandleHook(hookEvent string, input io.Reader) error {
 			return err
 		}
 		defer h.cleanupOldLocks()
+	case "TeammateIdle":
+		return h.handleTeammateIdle(&hookData)
 	default:
 		return fmt.Errorf("unknown hook event: %s", hookEvent)
 	}
@@ -317,21 +361,13 @@ func (h *Handler) HandleHook(hookEvent string, input io.Reader) error {
 		}
 	}()
 
-	// Check for duplicate message content (3 minutes = 180 seconds window).
-	// Skip for question status: consecutive permission prompts read the same
-	// transcript and produce identical summaries, but each is a distinct
-	// user-facing event. Question is already protected by per-hook dedup
-	// lock (2s TTL), content lock (5s TTL), and cooldown suppression.
-	if status == analyzer.StatusQuestion {
-		logging.Debug("Skipping content dedup for question status")
-	} else {
-		isDuplicate, err := h.stateMgr.IsDuplicateMessage(hookData.SessionID, message, 180)
-		if err != nil {
-			logging.Warn("Failed to check duplicate message: %v", err)
-		} else if isDuplicate {
-			logging.Debug("Duplicate message content detected within 3 minutes, skipping")
-			return nil
-		}
+	// Check for duplicate message content (3 minutes = 180 seconds window)
+	isDuplicate, err := h.stateMgr.IsDuplicateMessage(hookData.SessionID, message, 180)
+	if err != nil {
+		logging.Warn("Failed to check duplicate message: %v", err)
+	} else if isDuplicate {
+		logging.Debug("Duplicate message content detected within 3 minutes, skipping")
+		return nil
 	}
 
 	// Update last notification time and message
@@ -373,6 +409,71 @@ func (h *Handler) handlePreToolUse(hookData *HookData) analyzer.Status {
 func (h *Handler) handleNotificationEvent(hookData *HookData) (analyzer.Status, error) {
 	logging.Debug("Notification event received → question status")
 	return analyzer.StatusQuestion, nil
+}
+
+// handleTeammateIdle handles the TeammateIdle hook event.
+// Records the teammate as idle, checks if all teammates are idle + lead stopped,
+// and sends a notification when both conditions are met.
+func (h *Handler) handleTeammateIdle(hookData *HookData) error {
+	if hookData.TeamName == "" || hookData.TeammateName == "" {
+		logging.Debug("TeammateIdle: missing team_name or teammate_name, skipping")
+		return nil
+	}
+
+	teamMode := h.cfg.GetTeamMode()
+	if teamMode != "wait-all" {
+		logging.Debug("TeammateIdle: teamMode=%q, skipping (only active in wait-all mode)", teamMode)
+		return nil
+	}
+
+	// Dedup: prevent rapid duplicate TeammateIdle events for the same teammate
+	dedupKey := hookData.SessionID + "-" + hookData.TeammateName
+	if h.dedupMgr.CheckEarlyDuplicate(dedupKey, "TeammateIdle") {
+		logging.Debug("TeammateIdle: duplicate for %q, skipping", hookData.TeammateName)
+		return nil
+	}
+
+	logging.Debug("TeammateIdle: teammate=%q team=%q", hookData.TeammateName, hookData.TeamName)
+
+	// Get team info to know all expected members
+	teamInfo := h.teamStateMgr.DetectTeamByName(hookData.TeamName)
+	if teamInfo == nil {
+		logging.Debug("TeammateIdle: team %q config not found, skipping", hookData.TeamName)
+		return nil
+	}
+
+	// Record this teammate as idle
+	if err := h.teamStateMgr.RecordTeammateIdle(hookData.TeamName, hookData.TeammateName); err != nil {
+		logging.Warn("TeammateIdle: failed to record idle state: %v", err)
+		return nil
+	}
+
+	// Check if all conditions are met: lead stopped + all teammates idle
+	allIdle, err := h.teamStateMgr.CheckAllIdle(hookData.TeamName, teamInfo.Members)
+	if err != nil {
+		logging.Warn("TeammateIdle: failed to check team idle state: %v", err)
+		return nil
+	}
+
+	if !allIdle {
+		logging.Debug("TeammateIdle: not all conditions met yet for team %q", hookData.TeamName)
+		return nil
+	}
+
+	// All conditions met — send notification
+	logging.Debug("TeammateIdle: all teammates idle + lead stopped for team %q, sending notification", hookData.TeamName)
+
+	if err := h.teamStateMgr.MarkNotified(hookData.TeamName); err != nil {
+		logging.Warn("TeammateIdle: failed to mark team notified: %v", err)
+	}
+
+	status := analyzer.StatusTaskComplete
+	message := fmt.Sprintf("Team %q: all teammates finished work", hookData.TeamName)
+
+	h.sendNotifications(status, message, hookData.SessionID, hookData.CWD)
+
+	logging.Debug("=== Hook completed: TeammateIdle (team notification sent) ===")
+	return nil
 }
 
 // handleStopEvent handles Stop/SubagentStop hooks.
@@ -419,60 +520,42 @@ func (h *Handler) generateMessage(hookData *HookData, status analyzer.Status, me
 	return summary.GenerateSimple(status, h.cfg)
 }
 
-// buildNotification creates a transport-agnostic Event from hook context.
-func (h *Handler) buildNotification(status analyzer.Status, message, sessionID, cwd string) (notification.Event, error) {
-	info, ok := h.cfg.GetStatusInfo(string(status))
-	title := string(status)
-	if ok {
-		title = info.Title
-	}
-	return notification.Event{
-		Status:      status,
-		SessionID:   sessionID,
-		CWD:         cwd,
-		SessionName: sessionname.GenerateSessionLabel(sessionID),
-		GitBranch:   platform.GetGitBranch(cwd),
-		Folder:      filepath.Base(cwd),
-		Title:       title,
-		Body:        message,
-	}, nil
-}
-
-// sendNotifications sends desktop, webhook, and OSC notifications
+// sendNotifications sends desktop and webhook notifications
 func (h *Handler) sendNotifications(status analyzer.Status, message, sessionID, cwd string) {
 	// Add panic recovery to prevent notification failures from crashing the plugin
 	defer errorhandler.HandlePanic()
 
-	evt, err := h.buildNotification(status, message, sessionID, cwd)
-	if err != nil {
-		errorhandler.HandleError(err, "Failed to build notification")
-		return
+	// Add session name, git branch and folder name to message
+	sessionName := sessionname.GenerateSessionLabel(sessionID)
+	gitBranch := platform.GetGitBranch(cwd)
+	folderName := filepath.Base(cwd)
+
+	// Format: "[sessionname|branch folder] message" or "[sessionname folder] message"
+	var enhancedMessage string
+	if gitBranch != "" {
+		enhancedMessage = fmt.Sprintf("[%s|%s %s] %s", sessionName, gitBranch, folderName, message)
+	} else {
+		enhancedMessage = fmt.Sprintf("[%s %s] %s", sessionName, folderName, message)
 	}
+
+	logging.Debug("Session name: %s, git branch: %s, folder: %s", sessionName, gitBranch, folderName)
 
 	statusStr := string(status)
 
-	// Send desktop notification
+	// Send desktop notification (check per-status enabled)
 	if h.cfg.IsStatusDesktopEnabled(statusStr) {
-		if err := h.notifierSvc.SendDesktop(evt); err != nil {
+		if err := h.notifierSvc.SendDesktop(status, enhancedMessage, sessionID, cwd); err != nil {
 			errorhandler.HandleError(err, "Failed to send desktop notification")
 		}
 	} else {
 		logging.Debug("Desktop notification disabled for status: %s", statusStr)
 	}
 
-	// Send webhook notification (transitional: render Event -> legacy string)
+	// Send webhook notification (async, check per-status enabled)
 	if h.cfg.IsStatusWebhookEnabled(statusStr) {
-		enhancedMessage := notification.RenderEnhancedMessage(evt)
 		h.webhookSvc.SendAsync(status, enhancedMessage, sessionID)
 	} else {
 		logging.Debug("Webhook notification disabled for status: %s", statusStr)
-	}
-
-	// Send OSC terminal notification
-	if h.cfg.IsStatusOSCEnabled(statusStr) {
-		if err := h.notifierSvc.SendOSC(evt); err != nil {
-			logging.Debug("OSC notification failed: %v", err)
-		}
 	}
 }
 
