@@ -15,6 +15,7 @@ import (
 	"github.com/777genius/claude-notifications/internal/analyzer"
 	"github.com/777genius/claude-notifications/internal/config"
 	"github.com/777genius/claude-notifications/internal/dedup"
+	"github.com/777genius/claude-notifications/internal/notification"
 	"github.com/777genius/claude-notifications/internal/state"
 	"github.com/777genius/claude-notifications/pkg/jsonl"
 )
@@ -32,27 +33,26 @@ func setTestHome(t *testing.T, dir string) {
 // === Mock Notifier ===
 
 type mockNotifier struct {
-	mu         sync.Mutex
-	calls      []notificationCall
-	shouldFail bool
+	mu           sync.Mutex
+	desktopCalls []notification.Event
+	oscCalls     []notification.Event
+	shouldFail   bool
 }
 
-type notificationCall struct {
-	status  analyzer.Status
-	message string
-	cwd     string
-}
-
-func (m *mockNotifier) SendDesktop(status analyzer.Status, message, sessionID, cwd string) error {
+func (m *mockNotifier) SendDesktop(evt notification.Event) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.desktopCalls = append(m.desktopCalls, evt)
+	if m.shouldFail {
+		return errors.New("mock error")
+	}
+	return nil
+}
 
-	m.calls = append(m.calls, notificationCall{
-		status:  status,
-		message: message,
-		cwd:     cwd,
-	})
-
+func (m *mockNotifier) SendOSC(evt notification.Event) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.oscCalls = append(m.oscCalls, evt)
 	if m.shouldFail {
 		return errors.New("mock error")
 	}
@@ -66,22 +66,35 @@ func (m *mockNotifier) Close() error {
 func (m *mockNotifier) wasCalled() bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return len(m.calls) > 0
+	return len(m.desktopCalls) > 0 || len(m.oscCalls) > 0
+}
+
+func (m *mockNotifier) desktopWasCalled() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.desktopCalls) > 0
+}
+
+func (m *mockNotifier) oscWasCalled() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.oscCalls) > 0
 }
 
 func (m *mockNotifier) callCount() int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return len(m.calls)
+	return len(m.desktopCalls) + len(m.oscCalls)
 }
 
-func (m *mockNotifier) lastCall() *notificationCall {
+func (m *mockNotifier) lastDesktopCall() *notification.Event {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if len(m.calls) == 0 {
+	if len(m.desktopCalls) == 0 {
 		return nil
 	}
-	return &m.calls[len(m.calls)-1]
+	evt := m.desktopCalls[len(m.desktopCalls)-1]
+	return &evt
 }
 
 // === Mock Webhook ===
@@ -279,13 +292,13 @@ func TestHandler_PreToolUse_ExitPlanMode(t *testing.T) {
 		t.Error("expected notification to be sent")
 	}
 
-	call := mockNotif.lastCall()
+	call := mockNotif.lastDesktopCall()
 	if call == nil {
 		t.Fatal("no notification sent")
 	}
 
-	if call.status != analyzer.StatusPlanReady {
-		t.Errorf("got status %v, want StatusPlanReady", call.status)
+	if call.Status != analyzer.StatusPlanReady {
+		t.Errorf("got status %v, want StatusPlanReady", call.Status)
 	}
 }
 
@@ -317,9 +330,9 @@ func TestHandler_PreToolUse_AskUserQuestion(t *testing.T) {
 		t.Error("expected notification to be sent")
 	}
 
-	call := mockNotif.lastCall()
-	if call.status != analyzer.StatusQuestion {
-		t.Errorf("got status %v, want StatusQuestion", call.status)
+	call := mockNotif.lastDesktopCall()
+	if call.Status != analyzer.StatusQuestion {
+		t.Errorf("got status %v, want StatusQuestion", call.Status)
 	}
 }
 
@@ -355,9 +368,9 @@ func TestHandler_Stop_ReviewComplete(t *testing.T) {
 		t.Error("expected notification to be sent")
 	}
 
-	call := mockNotif.lastCall()
-	if call.status != analyzer.StatusReviewComplete {
-		t.Errorf("got status %v, want StatusReviewComplete", call.status)
+	call := mockNotif.lastDesktopCall()
+	if call.Status != analyzer.StatusReviewComplete {
+		t.Errorf("got status %v, want StatusReviewComplete", call.Status)
 	}
 }
 
@@ -393,9 +406,9 @@ func TestHandler_Stop_TaskComplete(t *testing.T) {
 		t.Error("expected notification to be sent")
 	}
 
-	call := mockNotif.lastCall()
-	if call.status != analyzer.StatusTaskComplete {
-		t.Errorf("got status %v, want StatusTaskComplete", call.status)
+	call := mockNotif.lastDesktopCall()
+	if call.Status != analyzer.StatusTaskComplete {
+		t.Errorf("got status %v, want StatusTaskComplete", call.Status)
 	}
 }
 
@@ -1986,5 +1999,171 @@ func TestHandler_SuppressFilter_NonMatchingFilter_SendsNotification(t *testing.T
 	// Should still send because filter doesn't match
 	if !mockNotif.wasCalled() {
 		t.Error("expected notification when suppress-filter does not match")
+	}
+}
+
+func TestSendNotifications_OSCFires(t *testing.T) {
+	t.Setenv("SSH_CONNECTION", "1.2.3.4 5678 5.6.7.8 22")
+	cfg := config.DefaultConfig()
+	cfg.Notifications.Desktop.Enabled = false
+	cfg.Notifications.Webhook.Enabled = false
+	// OSC.Enabled is nil (auto) -> should detect SSH and enable
+	handler, mockNotif, _ := newTestHandler(t, cfg)
+
+	transcript := buildTranscriptWithTools([]string{"Write"}, 100)
+	transcriptPath := createTempTranscript(t, transcript)
+
+	err := handler.HandleHook("Stop", buildHookDataJSON(HookData{
+		TranscriptPath: transcriptPath,
+		SessionID:      "test-osc-1",
+		CWD:            t.TempDir(),
+	}))
+	if err != nil {
+		t.Fatalf("HandleHook unexpected error: %v", err)
+	}
+
+	if !mockNotif.oscWasCalled() {
+		t.Fatal("expected OSC notification to fire in SSH session")
+	}
+}
+
+func TestSendNotifications_OSCDisabledWithoutSSH(t *testing.T) {
+	t.Setenv("SSH_CONNECTION", "")
+	t.Setenv("SSH_CLIENT", "")
+	t.Setenv("SSH_TTY", "")
+	cfg := config.DefaultConfig()
+	cfg.Notifications.Desktop.Enabled = false
+	cfg.Notifications.Webhook.Enabled = false
+	// OSC.Enabled is nil (auto) -> no SSH, should not enable
+
+	handler, mockNotif, _ := newTestHandler(t, cfg)
+
+	transcript := buildTranscriptWithTools([]string{"Write"}, 100)
+	transcriptPath := createTempTranscript(t, transcript)
+
+	err := handler.HandleHook("Stop", buildHookDataJSON(HookData{
+		TranscriptPath: transcriptPath,
+		SessionID:      "test-osc-2",
+		CWD:            t.TempDir(),
+	}))
+	if err != nil {
+		t.Fatalf("HandleHook unexpected error: %v", err)
+	}
+
+	if mockNotif.oscWasCalled() {
+		t.Fatal("OSC should NOT fire without SSH session")
+	}
+}
+
+func TestSendNotifications_DesktopAndOSCIndependent(t *testing.T) {
+	t.Setenv("SSH_CONNECTION", "1.2.3.4 5678 5.6.7.8 22")
+	cfg := config.DefaultConfig()
+	cfg.Notifications.Desktop.Enabled = true
+	cfg.Notifications.Webhook.Enabled = false
+	// OSC.Enabled is nil (auto) -> SSH detected, both desktop and OSC should fire
+
+	handler, mockNotif, _ := newTestHandler(t, cfg)
+
+	transcript := buildTranscriptWithTools([]string{"Write"}, 100)
+	transcriptPath := createTempTranscript(t, transcript)
+
+	err := handler.HandleHook("Stop", buildHookDataJSON(HookData{
+		TranscriptPath: transcriptPath,
+		SessionID:      "test-both-1",
+		CWD:            t.TempDir(),
+	}))
+	if err != nil {
+		t.Fatalf("HandleHook unexpected error: %v", err)
+	}
+
+	if !mockNotif.desktopWasCalled() {
+		t.Error("expected Desktop notification to fire")
+	}
+	if !mockNotif.oscWasCalled() {
+		t.Error("expected OSC notification to fire alongside Desktop")
+	}
+}
+
+func TestSendNotifications_OSCExplicitEnabled(t *testing.T) {
+	t.Setenv("SSH_CONNECTION", "")
+	t.Setenv("SSH_CLIENT", "")
+	t.Setenv("SSH_TTY", "")
+	cfg := config.DefaultConfig()
+	cfg.Notifications.Desktop.Enabled = false
+	cfg.Notifications.Webhook.Enabled = false
+	enabled := true
+	cfg.Notifications.OSC.Enabled = &enabled
+
+	handler, mockNotif, _ := newTestHandler(t, cfg)
+
+	transcript := buildTranscriptWithTools([]string{"Write"}, 100)
+	transcriptPath := createTempTranscript(t, transcript)
+
+	err := handler.HandleHook("Stop", buildHookDataJSON(HookData{
+		TranscriptPath: transcriptPath,
+		SessionID:      "test-explicit-1",
+		CWD:            t.TempDir(),
+	}))
+	if err != nil {
+		t.Fatalf("HandleHook unexpected error: %v", err)
+	}
+
+	if !mockNotif.oscWasCalled() {
+		t.Fatal("expected OSC notification with explicit enabled=true even without SSH")
+	}
+}
+
+func TestSendNotifications_OSCExplicitDisabled(t *testing.T) {
+	t.Setenv("SSH_CONNECTION", "1.2.3.4 5678 5.6.7.8 22")
+	cfg := config.DefaultConfig()
+	cfg.Notifications.Desktop.Enabled = false
+	cfg.Notifications.Webhook.Enabled = false
+	disabled := false
+	cfg.Notifications.OSC.Enabled = &disabled
+
+	handler, mockNotif, _ := newTestHandler(t, cfg)
+
+	transcript := buildTranscriptWithTools([]string{"Write"}, 100)
+	transcriptPath := createTempTranscript(t, transcript)
+
+	err := handler.HandleHook("Stop", buildHookDataJSON(HookData{
+		TranscriptPath: transcriptPath,
+		SessionID:      "test-explicit-2",
+		CWD:            t.TempDir(),
+	}))
+	if err != nil {
+		t.Fatalf("HandleHook unexpected error: %v", err)
+	}
+
+	if mockNotif.oscWasCalled() {
+		t.Fatal("OSC should NOT fire with explicit enabled=false even with SSH")
+	}
+}
+
+func TestSendNotifications_UnknownStatusStillSends(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Notifications.Desktop.Enabled = false
+	cfg.Notifications.Webhook.Enabled = true
+	enabled := true
+	cfg.Notifications.OSC.Enabled = &enabled
+
+	handler, mockNotif, mockWH := newTestHandler(t, cfg)
+	status := analyzer.Status("custom_status")
+
+	handler.sendNotifications(status, "Custom body", "test-unknown-1", t.TempDir())
+
+	if !mockWH.wasCalled() {
+		t.Fatal("expected webhook notification for unknown status")
+	}
+	if !mockNotif.oscWasCalled() {
+		t.Fatal("expected OSC notification for unknown status")
+	}
+
+	call := mockNotif.oscCalls[len(mockNotif.oscCalls)-1]
+	if call.Title != "custom_status" {
+		t.Fatalf("expected fallback title %q, got %q", "custom_status", call.Title)
+	}
+	if call.Status != status {
+		t.Fatalf("expected status %q, got %q", status, call.Status)
 	}
 }
