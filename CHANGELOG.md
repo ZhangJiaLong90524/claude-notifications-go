@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.35.0] - 2026-03-28
+
+### Added
+- **OSC terminal notifications for SSH/tmux users** — terminal title updates are now sent via OSC escape sequences when running in SSH/tmux environments, improving tab/window visibility for active Claude sessions ([#58](https://github.com/777genius/claude-notifications-go/pull/58))
+
+### Fixed
+- **macOS ClaudeNotifier production signing** — restored Developer ID signing with hardened runtime and notarization in release CI, including runtime-safe launch behavior and dedicated smoke validation workflow ([#60](https://github.com/777genius/claude-notifications-go/pull/60), [#59](https://github.com/777genius/claude-notifications-go/issues/59))
+- **Windows toast diagnostics on failure** — improved diagnostics when Windows notifications are disabled or rejected, making root-cause detection clearer ([#57](https://github.com/777genius/claude-notifications-go/pull/57))
+- **Question notification dedup suppression** — question status events now bypass content-based dedup lock to avoid legitimate question notifications being dropped ([#56](https://github.com/777genius/claude-notifications-go/pull/56))
+- **Unknown status passthrough** — unknown status notifications are preserved instead of being dropped in status normalization paths
+
 ## [1.34.1] - 2026-03-26
 
 ### Fixed
