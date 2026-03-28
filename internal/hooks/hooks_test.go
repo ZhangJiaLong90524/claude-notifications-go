@@ -2114,7 +2114,7 @@ func TestHandler_Stop_TeamMode_Smart_NotifiesWhenAllIdle(t *testing.T) {
 
 	// Pre-record alice as idle (simulates TeammateIdle having fired already)
 	teamMgr := setupTeamStateManager(t, claudeDir)
-	teamMgr.RecordTeammateIdle(teamName, "alice")
+	teamMgr.RecordTeammateIdle(teamName, "alice") //nolint:errcheck
 
 	hookData := buildHookDataJSON(HookData{
 		SessionID:      sessionID,
@@ -2152,8 +2152,8 @@ func TestHandler_TeammateIdle_SendsWhenAllReady(t *testing.T) {
 
 	// Pre-record: lead stopped + alice already idle
 	teamMgr := setupTeamStateManager(t, claudeDir)
-	teamMgr.RecordLeadStopped(teamName)
-	teamMgr.RecordTeammateIdle(teamName, "alice")
+	teamMgr.RecordLeadStopped(teamName)            //nolint:errcheck
+	teamMgr.RecordTeammateIdle(teamName, "alice") //nolint:errcheck
 
 	// Now bob goes idle → should trigger notification
 	hookData := buildHookDataJSON(HookData{
@@ -2250,4 +2250,3 @@ func setupTeamStateManager(t *testing.T, homeDir string) *teamstate.Manager {
 	t.Helper()
 	return teamstate.NewManager(filepath.Join(homeDir, ".claude"))
 }
-

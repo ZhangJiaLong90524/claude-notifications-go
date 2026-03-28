@@ -84,7 +84,7 @@ func TestDetectTeamLead_NoNonLeadMembers(t *testing.T) {
 		},
 	}
 	data, _ := json.Marshal(cfg)
-	os.WriteFile(filepath.Join(teamsDir, "config.json"), data, 0644)
+	os.WriteFile(filepath.Join(teamsDir, "config.json"), data, 0644) //nolint:errcheck
 
 	mgr := NewManager(tmpDir)
 	info := mgr.DetectTeamLead("session-solo")
@@ -96,7 +96,7 @@ func TestDetectTeamLead_NoNonLeadMembers(t *testing.T) {
 func TestDetectTeamByName(t *testing.T) {
 	tmpDir := t.TempDir()
 	teamsDir := filepath.Join(tmpDir, "teams", "my-team")
-	os.MkdirAll(teamsDir, 0755)
+	os.MkdirAll(teamsDir, 0755) //nolint:errcheck
 
 	cfg := teamConfig{
 		Name:          "my-team",
@@ -107,7 +107,7 @@ func TestDetectTeamByName(t *testing.T) {
 		},
 	}
 	data, _ := json.Marshal(cfg)
-	os.WriteFile(filepath.Join(teamsDir, "config.json"), data, 0644)
+	os.WriteFile(filepath.Join(teamsDir, "config.json"), data, 0644) //nolint:errcheck
 
 	mgr := NewManager(tmpDir)
 
@@ -189,7 +189,7 @@ func TestStateLifecycle(t *testing.T) {
 	})
 
 	t.Run("check all idle - all idle", func(t *testing.T) {
-		mgr.RecordTeammateIdle(teamName, "bob")
+		mgr.RecordTeammateIdle(teamName, "bob") //nolint:errcheck
 
 		allIdle, err := mgr.CheckAllIdle(teamName, []string{"alice", "bob"})
 		if err != nil {
@@ -236,7 +236,7 @@ func TestCheckAllIdle_LeadNotStopped(t *testing.T) {
 	defer os.Remove(statePath(teamName))
 
 	// Record teammate idle but NOT lead stopped
-	mgr.RecordTeammateIdle(teamName, "alice")
+	mgr.RecordTeammateIdle(teamName, "alice") //nolint:errcheck
 
 	allIdle, err := mgr.CheckAllIdle(teamName, []string{"alice"})
 	if err != nil {
@@ -254,7 +254,7 @@ func TestCorruptedStateFile(t *testing.T) {
 	defer os.Remove(path)
 
 	// Write corrupted data
-	os.WriteFile(path, []byte("not json {{{"), 0600)
+	os.WriteFile(path, []byte("not json {{{"), 0600) //nolint:errcheck
 
 	s, err := mgr.LoadState(teamName)
 	if err != nil {
