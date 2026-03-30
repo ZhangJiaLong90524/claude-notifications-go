@@ -80,6 +80,13 @@ jobs:
           LIST_SOUNDS_BINARY="${{ matrix.binary }}"
           LIST_SOUNDS_BINARY="${LIST_SOUNDS_BINARY//claude-notifications/list-sounds}"
           go build -ldflags="-s -w" -trimpath -o dist/$LIST_SOUNDS_BINARY ./cmd/list-sounds
+          # Windows-only: build focus binary (GUI subsystem, no console flash on protocol activation)
+          if [[ "${{ matrix.binary }}" == *"windows"* ]]; then
+            echo "Building claude-notifications-focus (GUI subsystem)..."
+            FOCUS_BINARY="${{ matrix.binary }}"
+            FOCUS_BINARY="${FOCUS_BINARY//claude-notifications/claude-notifications-focus}"
+            go build -ldflags="-s -w -H windowsgui" -trimpath -o dist/$FOCUS_BINARY ./cmd/claude-notifications-focus
+          fi
 
       - name: Upload binary artifacts
         uses: actions/upload-artifact@v4

@@ -1450,6 +1450,23 @@ main() {
     echo -e "${GREEN}========================================${NC}"
     echo ""
     echo -e "${GREEN}✓${NC} Binary downloaded: ${BOLD}${BINARY_NAME}${NC}"
+
+    # Windows-only: download focus binary (GUI subsystem, for click-to-focus protocol activation)
+    if [ "$PLATFORM" = "windows" ]; then
+        local FOCUS_BINARY_NAME="claude-notifications-focus-${PLATFORM}-${ARCH}.exe"
+        local FOCUS_BINARY_PATH="${SCRIPT_DIR}/${FOCUS_BINARY_NAME}"
+        local focus_url="${RELEASE_URL}/${FOCUS_BINARY_NAME}"
+        echo -e "${BLUE}📦 Downloading ${BOLD}${FOCUS_BINARY_NAME}${NC}${BLUE} (click-to-focus handler)...${NC}"
+        if curl -fL "${CURL_EXTRA_OPTS[@]}" --connect-timeout "$CONNECT_TIMEOUT" --progress-bar --max-time "$CURL_TIMEOUT" \
+            "$focus_url" -o "$FOCUS_BINARY_PATH" 2>/dev/null && [ -f "$FOCUS_BINARY_PATH" ] && [ "$(get_file_size "$FOCUS_BINARY_PATH")" -gt 10000 ]; then
+            chmod +x "$FOCUS_BINARY_PATH"
+            echo -e "${GREEN}✓${NC} Focus binary downloaded: ${BOLD}${FOCUS_BINARY_NAME}${NC}"
+        else
+            rm -f "$FOCUS_BINARY_PATH"
+            echo -e "${YELLOW}⚠${NC} Focus binary not available (click-to-focus will use fallback)"
+        fi
+    fi
+
     echo -e "${GREEN}✓${NC} Utilities: sound-preview, list-devices, list-sounds"
     echo -e "${GREEN}✓${NC} Location: ${SCRIPT_DIR}/"
     echo -e "${GREEN}✓${NC} Checksum verified"

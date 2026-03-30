@@ -64,6 +64,9 @@ jobs:
       - name: Test list-sounds binary
         run: go build -o bin/list-sounds.exe ./cmd/list-sounds
 
+      - name: Build focus binary (GUI subsystem)
+        run: go build -ldflags="-H windowsgui" -o bin/claude-notifications-focus.exe ./cmd/claude-notifications-focus
+
       - name: Run install.sh unit tests
         run: bash bin/install_test.sh
         shell: bash

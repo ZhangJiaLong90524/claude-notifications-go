@@ -117,4 +117,18 @@ If the Python API is not available, the plugin falls back to standard `tmux sele
 
 ## Windows
 
-Notifications only, no click-to-focus.
+Click-to-focus is supported on Windows via Protocol Activation. Clicking a toast notification launches a focus helper that brings your terminal window to the foreground.
+
+### Supported terminals
+
+| Terminal | Click-to-focus | Notes |
+|----------|---------------|-------|
+| Windows Terminal | Yes | Precise window targeting via captured HWND |
+| Standalone PowerShell / cmd.exe | Fallback only | Title-based window matching |
+| VS Code integrated terminal | Fallback only | Title-based window matching |
+
+### Known limitations
+
+- **Tab switching**: only the WT window is focused, not the specific tab.
+- **Virtual desktops**: does not switch virtual desktops.
+- **Stale HWND**: if the terminal window is closed and reopened between notification and click, falls back to title matching.

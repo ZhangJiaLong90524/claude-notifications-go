@@ -172,7 +172,7 @@ Linux focus methods (tried in order): GNOME extension, GNOME Shell Eval, GNOME F
 
 **Multiplexers** (both platforms): tmux (including iTerm2 -CC integration mode), zellij, WezTerm, kitty — click switches to the correct pane/tab.
 
-**Windows** — notifications only, no click-to-focus.
+**Windows** — click-to-focus via Protocol Activation (Windows Terminal supported).
 
 See **[Click-to-Focus Guide](docs/CLICK_TO_FOCUS.md)** for configuration details.
 

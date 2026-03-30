@@ -6,9 +6,11 @@
 
 # Binary names
 BINARY=claude-notifications
+FOCUS_BINARY=claude-notifications-focus
 SOUND_PREVIEW=sound-preview
 LIST_SOUNDS=list-sounds
 BINARY_PATH=bin/$(BINARY)
+FOCUS_BINARY_PATH=bin/$(FOCUS_BINARY)
 SOUND_PREVIEW_PATH=bin/$(SOUND_PREVIEW)
 LIST_SOUNDS_PATH=bin/$(LIST_SOUNDS)
 
@@ -23,6 +25,10 @@ build: ## Build the binaries (development mode with debug symbols)
 	@go build -o $(BINARY_PATH) ./cmd/claude-notifications
 	@go build -o $(SOUND_PREVIEW_PATH) ./cmd/sound-preview
 	@go build -o $(LIST_SOUNDS_PATH) ./cmd/list-sounds
+ifeq ($(OS),Windows_NT)
+	@echo "Building $(FOCUS_BINARY) (GUI subsystem, Windows only)..."
+	@go build -ldflags="-H windowsgui" -o $(FOCUS_BINARY_PATH) ./cmd/claude-notifications-focus
+endif
 	@echo "Build complete! Binaries in bin/"
 
 build-all: ## Build optimized binaries for all platforms
@@ -34,6 +40,8 @@ build-all: ## Build optimized binaries for all platforms
 	@GOOS=linux GOARCH=amd64 go build $(RELEASE_FLAGS) -o dist/$(BINARY)-linux-amd64 ./cmd/claude-notifications
 	@GOOS=linux GOARCH=arm64 go build $(RELEASE_FLAGS) -o dist/$(BINARY)-linux-arm64 ./cmd/claude-notifications
 	@GOOS=windows GOARCH=amd64 go build $(RELEASE_FLAGS) -o dist/$(BINARY)-windows-amd64.exe ./cmd/claude-notifications
+	@echo "Building claude-notifications-focus (Windows GUI subsystem)..."
+	@GOOS=windows GOARCH=amd64 go build -ldflags="-s -w -H windowsgui" -trimpath -o dist/$(FOCUS_BINARY)-windows-amd64.exe ./cmd/claude-notifications-focus
 	@echo "Building sound-preview..."
 	@GOOS=darwin GOARCH=amd64 go build $(RELEASE_FLAGS) -o dist/$(SOUND_PREVIEW)-darwin-amd64 ./cmd/sound-preview
 	@GOOS=darwin GOARCH=arm64 go build $(RELEASE_FLAGS) -o dist/$(SOUND_PREVIEW)-darwin-arm64 ./cmd/sound-preview

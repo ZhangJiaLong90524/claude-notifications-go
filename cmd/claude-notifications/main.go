@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	"github.com/777genius/claude-notifications/internal/audio"
 	"github.com/777genius/claude-notifications/internal/errorhandler"
@@ -58,6 +59,22 @@ func main() {
 	case "help", "--help", "-h":
 		printUsage()
 	default:
+		// Windows protocol activation: URI passed as first argument
+		// e.g., claude-notifications.exe "claude-notifications-go://focus?cwd=..."
+		if strings.HasPrefix(command, notifier.URIScheme+"://") {
+			// Initialize logger for protocol handler
+			pluginRoot := getPluginRoot()
+			// Logger init failure is non-fatal for protocol handler
+			_, _ = logging.InitLogger(pluginRoot)
+			defer logging.Close()
+
+			if err := notifier.HandleProtocolActivation(command); err != nil {
+				logging.Warn("protocol activation failed: %v", err)
+				// Exit silently — protocol handler is launched by Windows Runtime,
+				// stderr is not visible to users and os.Exit(1) may trigger WER.
+			}
+			return
+		}
 		fmt.Fprintf(os.Stderr, "Error: unknown command: %s\n", command)
 		printUsage()
 		os.Exit(1)

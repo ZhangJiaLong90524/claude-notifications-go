@@ -44,7 +44,7 @@ type DesktopConfig struct {
 	Volume           float64 `json:"volume"`           // Volume level 0.0-1.0, default 1.0 (full volume)
 	AudioDevice      string  `json:"audioDevice"`      // Audio output device name (empty = system default)
 	AppIcon          string  `json:"appIcon"`          // Path to app icon
-	ClickToFocus     bool    `json:"clickToFocus"`     // macOS: activate terminal on notification click (default: true)
+	ClickToFocus     bool    `json:"clickToFocus"`     // Activate terminal on notification click (macOS/Linux/Windows, default: true)
 	TerminalBundleID string  `json:"terminalBundleId"` // macOS: override auto-detected terminal bundle ID (empty = auto)
 }
 
@@ -146,7 +146,7 @@ func DefaultConfig() *Config {
 				Sound:        true,
 				Volume:       1.0, // Full volume by default
 				AppIcon:      filepath.Join(pluginRoot, "claude_icon.png"),
-				ClickToFocus: true, // macOS: activate terminal on click (default: enabled)
+				ClickToFocus: true, // Activate terminal on click (default: enabled)
 				// TerminalBundleID: "" - empty means auto-detect
 			},
 			Webhook: WebhookConfig{
