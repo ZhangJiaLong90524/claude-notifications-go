@@ -75,11 +75,17 @@ func sendWindowsNotification(title, body, appIcon string, cfg *config.Config, cw
 		bench.Start("windows.hwnd_discovery")
 		hwnd := getTerminalHWND()
 		bench.Elapsed("windows.hwnd_discovery")
+
+		// Capture current tab index via UI Automation for tab switching on click
+		bench.Start("windows.tab_index")
+		tabIdx := getSelectedTabIndex(hwnd)
+		bench.Elapsed("windows.tab_index")
+
 		// No XML escaping needed: buildProtocolURI uses semicolons (;) as separators,
 		// following Windows Community Toolkit convention. Semicolons are safe in XML.
 		n.ActivationType = toast.Protocol
-		n.ActivationArguments = buildProtocolURI(cwd, hwnd)
-		logging.Debug("Windows notification: clickToFocus HWND=0x%X URI=%s", hwnd, n.ActivationArguments)
+		n.ActivationArguments = buildProtocolURI(cwd, hwnd, tabIdx)
+		logging.Debug("Windows notification: clickToFocus HWND=0x%X tabIdx=%d URI=%s", hwnd, tabIdx, n.ActivationArguments)
 	}
 
 	// Render XML

@@ -60,7 +60,7 @@ func TestBuildProtocolURI(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := buildProtocolURI(tt.cwd, tt.hwnd)
+			got := buildProtocolURI(tt.cwd, tt.hwnd, -1)
 			for _, part := range tt.wantParts {
 				if !strings.Contains(got, part) {
 					t.Errorf("buildProtocolURI(%q, 0x%X) = %q, missing %q", tt.cwd, tt.hwnd, got, part)
@@ -81,7 +81,7 @@ func TestBuildProtocolURI(t *testing.T) {
 // Windows ShellExecute treats & as a shell separator, breaking protocol
 // activation for multi-parameter URIs in toast launch attributes.
 func TestBuildProtocolURI_SemicolonSeparator(t *testing.T) {
-	uri := buildProtocolURI("/c/Projects/test", 0x12345)
+	uri := buildProtocolURI("/c/Projects/test", 0x12345, 2)
 
 	// Must use semicolons, not ampersands
 	if strings.Contains(uri, "&") {
@@ -140,9 +140,9 @@ func TestHandleProtocolActivation_InvalidURI(t *testing.T) {
 		wantErr string
 	}{
 		{
-			name:    "missing cwd and hwnd",
+			name:    "missing hwnd",
 			uri:     "claude-notifications-go://focus",
-			wantErr: "no valid HWND and no cwd",
+			wantErr: "no HWND in URI",
 		},
 		{
 			name:    "wrong action",
@@ -188,7 +188,7 @@ func TestBuildProtocolURI_Roundtrip(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			uri := buildProtocolURI(tt.cwd, tt.hwnd)
+			uri := buildProtocolURI(tt.cwd, tt.hwnd, -1)
 
 			// Parse the URI the same way HandleProtocolActivation does
 			u, err := url.Parse(uri)

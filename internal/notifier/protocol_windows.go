@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/registry"
@@ -102,8 +103,8 @@ func EnsureProtocolRegistered() error {
 //
 // Example output:
 //
-//	claude-notifications-go://focus?cwd=%2Fc%2FProjects%2Fmy-project;hwnd=2622762
-func buildProtocolURI(cwd string, hwnd uintptr) string {
+//	claude-notifications-go://focus?cwd=%2Fc%2FProjects%2Fmy-project;hwnd=2622762;tabIdx=2
+func buildProtocolURI(cwd string, hwnd uintptr, tabIdx int) string {
 	// Build query string with semicolons instead of ampersands.
 	// Cannot use url.Values.Encode() as it uses &.
 	var parts []string
@@ -112,6 +113,9 @@ func buildProtocolURI(cwd string, hwnd uintptr) string {
 	}
 	if hwnd != 0 {
 		parts = append(parts, "hwnd="+strconv.FormatUint(uint64(hwnd), 10))
+	}
+	if tabIdx >= 0 {
+		parts = append(parts, "tabIdx="+strconv.Itoa(tabIdx))
 	}
 	u := url.URL{
 		Scheme:   URIScheme,
@@ -126,14 +130,13 @@ func buildProtocolURI(cwd string, hwnd uintptr) string {
 //
 // The full URI is passed as os.Args[1]:
 //
-//	claude-notifications-go://focus?cwd=%2Fc%2FProjects%2Fmy-project;hwnd=2622762
+//	claude-notifications-go://focus?cwd=%2Fc%2FProjects%2Fmy-project;hwnd=2622762;tabIdx=2
 //
 // Query parameters use semicolons (;) instead of ampersands (&) as separators,
 // following the Windows Community Toolkit ToastArguments convention. This avoids
 // Windows ShellExecute treating & as a shell separator.
 //
-// Strategy: try HWND first (direct, works even when Claude Code overrides the
-// terminal title), fall back to folder-name title matching.
+// Strategy: switch to the correct tab via UIA, then focus the window via HWND.
 func HandleProtocolActivation(uri string) error {
 	u, err := url.Parse(uri)
 	if err != nil {
@@ -146,27 +149,45 @@ func HandleProtocolActivation(uri string) error {
 
 	// Parse semicolon-separated query parameters (not standard &-separated).
 	params := parseSemicolonQuery(u.RawQuery)
-	cwd := params["cwd"]
 	hwndStr := params["hwnd"]
-	logging.Debug("Protocol activation: cwd=%s hwnd=%s", cwd, hwndStr)
+	tabIdxStr := params["tabIdx"]
+	logging.Debug("Protocol activation: hwnd=%s tabIdx=%s", hwndStr, tabIdxStr)
 
-	// Strategy 1: Direct HWND focus (captured at notification time)
-	if hwndStr != "" {
-		if hwndVal, err := strconv.ParseUint(hwndStr, 10, 64); err == nil && hwndVal != 0 {
-			h := windows.HWND(hwndVal)
-			if isWindowValid(h) {
-				logging.Debug("Focusing via captured HWND: 0x%X", hwndVal)
-				return focusWindow(h)
+	if hwndStr == "" {
+		return fmt.Errorf("protocol activation: no HWND in URI")
+	}
+
+	hwndVal, err := strconv.ParseUint(hwndStr, 10, 64)
+	if err != nil || hwndVal == 0 {
+		return fmt.Errorf("protocol activation: invalid HWND: %s", hwndStr)
+	}
+	h := windows.HWND(hwndVal)
+	if !isWindowValid(h) {
+		return fmt.Errorf("protocol activation: HWND 0x%X is no longer valid", hwndVal)
+	}
+
+	// Focus window first (restore from minimized), then switch tab.
+	// UIA cannot enumerate tabs while the window is minimized — FindAll
+	// only returns the title bar. The window must be restored first.
+	// A short delay after restore allows WT to rebuild its UIA tree.
+	logging.Debug("Focusing window HWND: 0x%X", hwndVal)
+	if err := focusWindow(h); err != nil {
+		return err
+	}
+
+	if tabIdxStr != "" {
+		// Brief delay after restore to let WT rebuild its UIA tree.
+		time.Sleep(150 * time.Millisecond)
+		if tabIdx, err := strconv.Atoi(tabIdxStr); err == nil && tabIdx >= 0 {
+			if err := selectTab(uintptr(hwndVal), tabIdx); err != nil {
+				logging.Debug("Tab switch failed (non-fatal): %v", err)
+			} else {
+				logging.Debug("Switched to tab %d", tabIdx)
 			}
-			logging.Debug("Captured HWND 0x%X is no longer valid, falling back to title match", hwndVal)
 		}
 	}
 
-	// No fallback: Claude Code overrides the terminal title with its own
-	// status line, so title-based window search would never match.
-	// The HWND captured at notification time (Strategy 1) is the only
-	// reliable method for click-to-focus.
-	return fmt.Errorf("protocol activation: no valid HWND available")
+	return nil
 }
 
 // parseSemicolonQuery parses a query string that uses semicolons as separators.
