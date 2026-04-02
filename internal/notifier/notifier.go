@@ -103,28 +103,29 @@ func (n *Notifier) SendDesktop(status analyzer.Status, message, sessionID, cwd s
 		appIcon = ""
 	}
 
-	// macOS: always prefer ClaudeNotifier/terminal-notifier to avoid Script Editor
-	// attribution. beeep on macOS ultimately falls back to osascript.
+	// macOS: prefer ClaudeNotifier/terminal-notifier so the common path keeps the
+	// native app attribution. If that fails, fall back to beeep as a delivery
+	// safety net rather than dropping the notification entirely.
 	if platform.IsMacOS() {
-		if !IsTerminalNotifierAvailable() {
-			return fmt.Errorf("ClaudeNotifier not available on macOS: run /claude-notifications-go:init to install it")
+		if IsTerminalNotifierAvailable() {
+			if err := n.sendWithTerminalNotifier(
+				title,
+				cleanMessage,
+				subtitle,
+				sessionID,
+				timeSensitive,
+				cwd,
+				n.cfg.Notifications.Desktop.ClickToFocus,
+			); err != nil {
+				logging.Warn("ClaudeNotifier failed on macOS, falling back to beeep: %v", err)
+			} else {
+				logging.Debug("Desktop notification sent via ClaudeNotifier/terminal-notifier: title=%s", title)
+				n.playSoundDetached(statusInfo.Sound)
+				return nil
+			}
+		} else {
+			logging.Warn("ClaudeNotifier not available on macOS, falling back to beeep (run /claude-notifications-go:init to install it)")
 		}
-
-		if err := n.sendWithTerminalNotifier(
-			title,
-			cleanMessage,
-			subtitle,
-			sessionID,
-			timeSensitive,
-			cwd,
-			n.cfg.Notifications.Desktop.ClickToFocus,
-		); err != nil {
-			return fmt.Errorf("macOS notification delivery failed without osascript fallback: %w", err)
-		}
-
-		logging.Debug("Desktop notification sent via ClaudeNotifier/terminal-notifier: title=%s", title)
-		n.playSoundDetached(statusInfo.Sound)
-		return nil
 	}
 
 	// Linux: Try daemon for click-to-focus support
@@ -343,8 +344,7 @@ func cwdToFileURL(cwd string) string {
 }
 
 // SendQuickNotification sends a one-off notification without requiring a
-// Notifier instance. On macOS it intentionally avoids osascript so the prompt
-// is never attributed to Script Editor.
+// Notifier instance.
 // executeCmd is the shell command run when the user clicks the notification (may be empty).
 func SendQuickNotification(title, message, executeCmd string) error {
 	if notifierPath, err := GetTerminalNotifierPath(); err == nil {
@@ -364,10 +364,6 @@ func SendQuickNotification(title, message, executeCmd string) error {
 		} else {
 			logging.Debug("terminal-notifier failed: %v, output: %s", err, string(output))
 		}
-	}
-
-	if platform.IsMacOS() {
-		return fmt.Errorf("quick notification delivery failed without osascript fallback")
 	}
 
 	// Fallback: osascript (no click action, just informational)

@@ -652,7 +652,7 @@ func TestSendDesktop_FallbackWhenTerminalNotifierFails(t *testing.T) {
 	_ = err
 }
 
-func TestSendDesktop_ClickToFocusDisabledDoesNotPanic(t *testing.T) {
+func TestSendDesktop_ClickToFocusDisabledStillDoesNotPanic(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.Notifications.Desktop.Enabled = true
 	cfg.Notifications.Desktop.ClickToFocus = false // Disabled

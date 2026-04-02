@@ -96,28 +96,53 @@ else
     echo "Warning: icon source not found at ${ICON_SRC}, skipping icon generation"
 fi
 
-if [ "$CI_MODE" = true ]; then
-    CODESIGN_FLAGS=(--force --timestamp --options runtime)
-    EFFECTIVE_ENTITLEMENTS=""
-    if [ -f "$CI_ENTITLEMENTS" ]; then
-        EFFECTIVE_ENTITLEMENTS="$CI_ENTITLEMENTS"
-    elif [ -f "$ENTITLEMENTS" ]; then
-        EFFECTIVE_ENTITLEMENTS="$ENTITLEMENTS"
-    fi
-    if [ -n "$EFFECTIVE_ENTITLEMENTS" ]; then
-        CODESIGN_FLAGS+=(--entitlements "$EFFECTIVE_ENTITLEMENTS")
-        echo "Using entitlements: ${EFFECTIVE_ENTITLEMENTS}"
+sign_with_entitlements() {
+    local entitlements_path="$1"
+    local label="$2"
+
+    local flags=(--force --timestamp --options runtime)
+    if [ -n "$entitlements_path" ]; then
+        flags+=(--entitlements "$entitlements_path")
+        echo "Using entitlements: ${entitlements_path}"
+    else
+        echo "Using entitlements: none"
     fi
 
-    SIGNING_IDENTITY="Developer ID Application"
-    echo "Code signing with: ${SIGNING_IDENTITY} (hardened runtime)"
-    codesign "${CODESIGN_FLAGS[@]}" --sign "${SIGNING_IDENTITY}" "${APP_BUNDLE}"
+    echo "Code signing with: Developer ID Application (hardened runtime) [${label}]"
+    codesign "${flags[@]}" --sign "Developer ID Application" "${APP_BUNDLE}"
     codesign --verify --verbose "${APP_BUNDLE}"
     echo "Signature verified"
 
     if ! open -W -n "${APP_BUNDLE}" --args -launchedViaLaunchServices -help >/dev/null 2>&1; then
-        echo "Error: signed app failed LaunchServices smoke check (-help)"
-        exit 1
+        echo "Error: signed app failed LaunchServices smoke check (-help) [${label}]"
+        return 1
+    fi
+
+    return 0
+}
+
+if [ "$CI_MODE" = true ]; then
+    FULL_ENTITLEMENTS=""
+    SAFE_ENTITLEMENTS=""
+    if [ -f "$ENTITLEMENTS" ]; then
+        FULL_ENTITLEMENTS="$ENTITLEMENTS"
+    fi
+    if [ -f "$CI_ENTITLEMENTS" ]; then
+        SAFE_ENTITLEMENTS="$CI_ENTITLEMENTS"
+    fi
+
+    EFFECTIVE_ENTITLEMENTS="$FULL_ENTITLEMENTS"
+    EFFECTIVE_LABEL="full"
+
+    if ! sign_with_entitlements "$EFFECTIVE_ENTITLEMENTS" "$EFFECTIVE_LABEL"; then
+        if [ -n "$SAFE_ENTITLEMENTS" ] && [ "$SAFE_ENTITLEMENTS" != "$FULL_ENTITLEMENTS" ]; then
+            echo "Warning: full entitlements failed runtime smoke check, retrying with CI-safe entitlements"
+            EFFECTIVE_ENTITLEMENTS="$SAFE_ENTITLEMENTS"
+            EFFECTIVE_LABEL="ci-safe"
+            sign_with_entitlements "$EFFECTIVE_ENTITLEMENTS" "$EFFECTIVE_LABEL"
+        else
+            exit 1
+        fi
     fi
 else
     echo "Code signing .app bundle (ad-hoc)..."
