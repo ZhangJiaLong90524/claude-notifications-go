@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.36.2] - 2026-04-02
+
+### Fixed
+- **GNOME/Wayland: notification click no longer leaves a long loading cursor** — on Ubuntu 24.04 GNOME/Wayland, notification clicks now use a hidden `claude-notifications.desktop` entry with `StartupNotify=false`, avoiding an unconsumed activation token while preserving click-to-focus behavior and the earlier Nautilus fallback fix ([#61](https://github.com/777genius/claude-notifications-go/issues/61))
+
 ## [1.36.1] - 2026-04-02
 
 ### Fixed
