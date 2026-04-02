@@ -339,7 +339,7 @@ func FocusAppWindow(bundleID, cwd string) error {
 
 // promptScreenRecordingOnce sends a one-time notification explaining why Screen
 // Recording access is needed. Clicking the notification opens the settings pane.
-// Uses the plugin's own notification system (ClaudeNotifier.app → legacy → osascript).
+// Uses the plugin's own notification system without an osascript fallback.
 func promptScreenRecordingOnce() {
 	stableDir, err := config.GetStableConfigDir()
 	if err != nil {

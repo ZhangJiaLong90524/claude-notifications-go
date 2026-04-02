@@ -1,5 +1,5 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
@@ -11,15 +11,33 @@ BUILD_DIR="${PROJECT_DIR}/.build"
 APP_BUNDLE="${PROJECT_DIR}/${APP_BUNDLE_NAME}.app"
 ICON_SRC="${REPO_ROOT}/claude_icon.png"
 ENTITLEMENTS="${PROJECT_DIR}/entitlements.plist"
+CI_ENTITLEMENTS="${PROJECT_DIR}/entitlements-ci.plist"
+
+CI_MODE=false
+SKIP_NOTARIZE=false
+for arg in "$@"; do
+    case "$arg" in
+        --ci) CI_MODE=true ;;
+        --skip-notarize) SKIP_NOTARIZE=true ;;
+        *)
+            echo "Unknown argument: $arg"
+            exit 1
+            ;;
+    esac
+done
 
 echo "Building ${BINARY_NAME}..."
+if [ "$CI_MODE" = true ]; then
+    echo "  Mode: CI (Developer ID + hardened runtime + notarization)"
+else
+    echo "  Mode: Local (ad-hoc signing)"
+fi
 
-# Build universal binary (arm64 + x86_64) for both Apple Silicon and Intel Macs
 cd "$PROJECT_DIR"
 
 echo "Building for arm64..."
 swift build -c release --arch arm64 2>&1
-ARM64_BINARY="${BUILD_DIR}/release/${BINARY_NAME}"
+ARM64_BINARY="${BUILD_DIR}/arm64-apple-macosx/release/${BINARY_NAME}"
 if [ ! -f "$ARM64_BINARY" ]; then
     echo "Error: arm64 binary not found at ${ARM64_BINARY}"
     exit 1
@@ -27,39 +45,33 @@ fi
 
 echo "Building for x86_64..."
 swift build -c release --arch x86_64 2>&1
-X86_BINARY="${BUILD_DIR}/release/${BINARY_NAME}"
+X86_BINARY="${BUILD_DIR}/x86_64-apple-macosx/release/${BINARY_NAME}"
 if [ ! -f "$X86_BINARY" ]; then
     echo "Error: x86_64 binary not found at ${X86_BINARY}"
     exit 1
 fi
 
-# Merge into universal binary
 BINARY="${BUILD_DIR}/${BINARY_NAME}-universal"
 lipo -create \
-    "${BUILD_DIR}/arm64-apple-macosx/release/${BINARY_NAME}" \
-    "${BUILD_DIR}/x86_64-apple-macosx/release/${BINARY_NAME}" \
+    "${ARM64_BINARY}" \
+    "${X86_BINARY}" \
     -output "$BINARY"
 
 echo "Universal binary built successfully: ${BINARY}"
 file "$BINARY"
 
-# Assemble .app bundle
 echo "Assembling .app bundle..."
 
 rm -rf "$APP_BUNDLE"
 mkdir -p "${APP_BUNDLE}/Contents/MacOS"
 mkdir -p "${APP_BUNDLE}/Contents/Resources"
 
-# Copy binary
 cp "$BINARY" "${APP_BUNDLE}/Contents/MacOS/${BINARY_NAME}"
-
-# Copy Info.plist
 cp "${PROJECT_DIR}/Resources/Info.plist" "${APP_BUNDLE}/Contents/"
 
-# Generate app icon if source PNG exists
 if [ -f "$ICON_SRC" ]; then
     echo "Generating app icon..."
-    ICONSET_DIR=$(mktemp -d)/AppIcon.iconset
+    ICONSET_DIR="$(mktemp -d)/AppIcon.iconset"
     mkdir -p "$ICONSET_DIR"
 
     sips -z 16 16 "$ICON_SRC" --out "$ICONSET_DIR/icon_16x16.png" 2>/dev/null || true
@@ -84,19 +96,65 @@ else
     echo "Warning: icon source not found at ${ICON_SRC}, skipping icon generation"
 fi
 
-# Code signing — always use ad-hoc.
-# Developer ID Application signing causes macOS to SIGKILL the binary on launch
-# (Gatekeeper/AMFI blocks non-notarized Developer ID apps run from CLI).
-# Ad-hoc signing works reliably because:
-# - The binary is never downloaded directly by users (installed via script/curl)
-# - No Gatekeeper check for script-installed binaries
-# - UNUserNotificationCenter works correctly with ad-hoc signing
-echo "Code signing .app bundle (ad-hoc)..."
-codesign --force --deep --sign - "$APP_BUNDLE" 2>/dev/null || {
-    echo "Warning: code signing failed (notifications may require manual permission)"
-}
+if [ "$CI_MODE" = true ]; then
+    CODESIGN_FLAGS=(--force --timestamp --options runtime)
+    EFFECTIVE_ENTITLEMENTS=""
+    if [ -f "$CI_ENTITLEMENTS" ]; then
+        EFFECTIVE_ENTITLEMENTS="$CI_ENTITLEMENTS"
+    elif [ -f "$ENTITLEMENTS" ]; then
+        EFFECTIVE_ENTITLEMENTS="$ENTITLEMENTS"
+    fi
+    if [ -n "$EFFECTIVE_ENTITLEMENTS" ]; then
+        CODESIGN_FLAGS+=(--entitlements "$EFFECTIVE_ENTITLEMENTS")
+        echo "Using entitlements: ${EFFECTIVE_ENTITLEMENTS}"
+    fi
 
-# Register with Launch Services (makes macOS aware of the app and its icon)
+    SIGNING_IDENTITY="Developer ID Application"
+    echo "Code signing with: ${SIGNING_IDENTITY} (hardened runtime)"
+    codesign "${CODESIGN_FLAGS[@]}" --sign "${SIGNING_IDENTITY}" "${APP_BUNDLE}"
+    codesign --verify --verbose "${APP_BUNDLE}"
+    echo "Signature verified"
+
+    if ! open -W -n "${APP_BUNDLE}" --args -launchedViaLaunchServices -help >/dev/null 2>&1; then
+        echo "Error: signed app failed LaunchServices smoke check (-help)"
+        exit 1
+    fi
+else
+    echo "Code signing .app bundle (ad-hoc)..."
+    codesign --force --deep --sign - "$APP_BUNDLE" 2>/dev/null || {
+        echo "Warning: code signing failed (notifications may require manual permission)"
+    }
+fi
+
+if [ "$CI_MODE" = true ] && [ "$SKIP_NOTARIZE" != true ]; then
+    echo ""
+    echo "Notarizing ${APP_BUNDLE_NAME}.app..."
+
+    if [ -z "${APPLE_ID:-}" ] || [ -z "${APPLE_PASSWORD:-}" ] || [ -z "${APPLE_TEAM_ID:-}" ]; then
+        echo "Error: APPLE_ID, APPLE_PASSWORD, and APPLE_TEAM_ID must be set for notarization"
+        exit 1
+    fi
+
+    NOTARIZE_ZIP="${BUILD_DIR}/${APP_BUNDLE_NAME}-notarize.zip"
+    ditto -c -k --keepParent "${APP_BUNDLE}" "${NOTARIZE_ZIP}"
+
+    xcrun notarytool submit "${NOTARIZE_ZIP}" \
+        --apple-id "${APPLE_ID}" \
+        --password "${APPLE_PASSWORD}" \
+        --team-id "${APPLE_TEAM_ID}" \
+        --wait
+
+    rm -f "${NOTARIZE_ZIP}"
+
+    echo "Stapling notarization ticket..."
+    xcrun stapler staple "${APP_BUNDLE}"
+
+    echo "Verifying notarized bundle..."
+    codesign --verify --verbose "${APP_BUNDLE}"
+    spctl --assess --type execute --verbose "${APP_BUNDLE}"
+    echo "Notarization complete!"
+fi
+
 LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
 if [ -x "$LSREGISTER" ]; then
     "$LSREGISTER" -f "$APP_BUNDLE" 2>/dev/null || true
@@ -107,7 +165,12 @@ echo ""
 echo "Build complete!"
 echo "  Binary: ${APP_BUNDLE}/Contents/MacOS/${BINARY_NAME}"
 echo "  Bundle: ${APP_BUNDLE}"
-echo ""
+if [ "$CI_MODE" = true ]; then
+    echo "  Signed: Developer ID Application (hardened runtime)"
+    if [ "$SKIP_NOTARIZE" != true ]; then
+        echo "  Notarized: yes"
+    fi
+fi
 echo ""
 echo "To install into plugin bin/:"
 echo "  cp -R ${APP_BUNDLE} ${REPO_ROOT}/bin/"
