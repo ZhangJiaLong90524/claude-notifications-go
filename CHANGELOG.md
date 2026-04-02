@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.36.1] - 2026-04-02
+
+### Fixed
+- **macOS: ClaudeNotifier notifications use native app attribution again** — the notifier now launches through LaunchServices instead of executing the app binary directly, preventing `UNUserNotificationCenter` from degrading into Script Editor attribution on recent macOS releases ([#59](https://github.com/777genius/claude-notifications-go/issues/59))
+- **macOS: ClaudeNotifier release artifacts are signed and notarized again** — CI restored Developer ID signing, hardened runtime, notarization, and stapling for `ClaudeNotifier.app` release assets, while preserving local ad-hoc builds for development
+- **macOS: delivery fallback remains available** — native ClaudeNotifier delivery is preferred, but macOS notification fallback behavior remains available if the bundled notifier cannot be used
+
 ## [1.36.0] - 2026-03-28
 
 ### Added
