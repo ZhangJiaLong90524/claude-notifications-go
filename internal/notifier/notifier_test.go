@@ -2,6 +2,7 @@ package notifier
 
 import (
 	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
@@ -539,7 +540,7 @@ func TestNotifier_ConfigAccess(t *testing.T) {
 // === Tests for buildTerminalNotifierArgs ===
 
 func TestBuildTerminalNotifierArgs_Basic(t *testing.T) {
-	args := buildTerminalNotifierArgs("Test Title", "Test Message", "com.test.app", "")
+	args := buildTerminalNotifierArgs("Test Title", "Test Message", "com.test.app", "", true)
 
 	// Check required arguments
 	if !containsArg(args, "-title", "Test Title") {
@@ -570,7 +571,7 @@ func TestBuildTerminalNotifierArgs_Basic(t *testing.T) {
 func TestBuildTerminalNotifierArgs_NoSender(t *testing.T) {
 	// -sender was removed because it conflicts with -activate on macOS Sequoia (15.x)
 	// This test verifies that -sender is NOT present
-	args := buildTerminalNotifierArgs("Title", "Message", "com.test.app", "")
+	args := buildTerminalNotifierArgs("Title", "Message", "com.test.app", "", true)
 
 	for _, arg := range args {
 		if arg == "-sender" {
@@ -586,6 +587,7 @@ func TestBuildTerminalNotifierArgs_SpecialCharacters(t *testing.T) {
 		"📝 3 new  ✏️ 2 edited  ⏱ 2m 15s",
 		"com.googlecode.iterm2",
 		"",
+		true,
 	)
 
 	if !containsArg(args, "-title", "Task Complete [session-1]") {
@@ -598,7 +600,7 @@ func TestBuildTerminalNotifierArgs_SpecialCharacters(t *testing.T) {
 
 func TestBuildTerminalNotifierArgs_EmptyValues(t *testing.T) {
 	// Test with empty title/message (edge case)
-	args := buildTerminalNotifierArgs("", "", "com.test.app", "")
+	args := buildTerminalNotifierArgs("", "", "com.test.app", "", true)
 
 	if !containsArg(args, "-title", "") {
 		t.Error("Empty title should still be present")
@@ -610,9 +612,9 @@ func TestBuildTerminalNotifierArgs_EmptyValues(t *testing.T) {
 
 func TestBuildTerminalNotifierArgs_UniqueGroupID(t *testing.T) {
 	// Two calls should produce different group IDs
-	args1 := buildTerminalNotifierArgs("Title", "Msg", "com.test", "")
+	args1 := buildTerminalNotifierArgs("Title", "Msg", "com.test", "", true)
 	time.Sleep(time.Nanosecond) // Ensure different timestamp
-	args2 := buildTerminalNotifierArgs("Title", "Msg", "com.test", "")
+	args2 := buildTerminalNotifierArgs("Title", "Msg", "com.test", "", true)
 
 	group1 := getArgValue(args1, "-group")
 	group2 := getArgValue(args2, "-group")
@@ -644,13 +646,13 @@ func TestSendDesktop_FallbackWhenTerminalNotifierFails(t *testing.T) {
 
 	n := New(cfg)
 
-	// Should not return error - should fall back to beeep
+	// Should not panic. On macOS we no longer fall back to beeep/osascript.
 	err := n.SendDesktop(analyzer.StatusTaskComplete, "[test] Fallback test", "", "")
 	// Error is acceptable in CI, but should not panic
 	_ = err
 }
 
-func TestSendDesktop_ClickToFocusDisabledUsesBeeep(t *testing.T) {
+func TestSendDesktop_ClickToFocusDisabledStillDoesNotPanic(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.Notifications.Desktop.Enabled = true
 	cfg.Notifications.Desktop.ClickToFocus = false // Disabled
@@ -658,10 +660,85 @@ func TestSendDesktop_ClickToFocusDisabledUsesBeeep(t *testing.T) {
 
 	n := New(cfg)
 
-	// Should use beeep path even on macOS
+	// Click-to-focus disabled should still avoid panics.
 	err := n.SendDesktop(analyzer.StatusTaskComplete, "[test] Beeep path test", "", "")
 	// Error acceptable in CI
 	_ = err
+}
+
+func TestClaudeNotifierAppPath_RecognizesBundleExecutable(t *testing.T) {
+	notifierPath := filepath.Join(
+		string(filepath.Separator),
+		"tmp",
+		"plugin",
+		"bin",
+		"ClaudeNotifier.app",
+		"Contents",
+		"MacOS",
+		"terminal-notifier-modern",
+	)
+
+	appPath, ok := claudeNotifierAppPath(notifierPath)
+	if !ok {
+		t.Fatal("Expected ClaudeNotifier path to be recognized")
+	}
+	if filepath.Base(appPath) != "ClaudeNotifier.app" {
+		t.Fatalf("Expected app path to end with ClaudeNotifier.app, got %s", appPath)
+	}
+}
+
+func TestClaudeNotifierAppPath_IgnoresLegacyBinary(t *testing.T) {
+	notifierPath := filepath.Join(string(filepath.Separator), "usr", "local", "bin", "terminal-notifier")
+	if _, ok := claudeNotifierAppPath(notifierPath); ok {
+		t.Fatalf("Legacy terminal-notifier path should not be treated as ClaudeNotifier.app: %s", notifierPath)
+	}
+}
+
+func TestBuildNotifierCommand_UsesOpenForClaudeNotifier(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("Skipping macOS-specific LaunchServices command test")
+	}
+
+	notifierPath := filepath.Join(
+		string(filepath.Separator),
+		"tmp",
+		"plugin",
+		"bin",
+		"ClaudeNotifier.app",
+		"Contents",
+		"MacOS",
+		"terminal-notifier-modern",
+	)
+
+	cmd := buildNotifierCommand(notifierPath, []string{"-title", "Test", "-message", "Hello"})
+	commandBase := strings.ToLower(filepath.Base(cmd.Path))
+	if commandBase != "open" && commandBase != "open.exe" {
+		t.Fatalf("Expected open command for ClaudeNotifier.app, got %s", cmd.Path)
+	}
+
+	if len(cmd.Args) < 8 {
+		t.Fatalf("Expected open command args with --args payload, got: %v", cmd.Args)
+	}
+	if cmd.Args[1] != "-W" || cmd.Args[2] != "-n" {
+		t.Fatalf("Expected open -W -n flags, got: %v", cmd.Args)
+	}
+	if cmd.Args[4] != "--args" {
+		t.Fatalf("Expected --args marker, got: %v", cmd.Args)
+	}
+	if cmd.Args[5] != "-launchedViaLaunchServices" {
+		t.Fatalf("Expected LaunchServices marker arg, got: %v", cmd.Args)
+	}
+}
+
+func TestBuildNotifierCommand_UsesDirectBinaryForLegacy(t *testing.T) {
+	notifierPath := filepath.Join(string(filepath.Separator), "usr", "local", "bin", "terminal-notifier")
+	cmd := buildNotifierCommand(notifierPath, []string{"-title", "Test"})
+	if cmd.Path != notifierPath {
+		t.Fatalf("Expected direct notifier path, got %s", cmd.Path)
+	}
+	if len(cmd.Args) < 2 || cmd.Args[0] != notifierPath {
+		t.Fatalf("Unexpected command args: %v", cmd.Args)
+	}
 }
 
 // === Helper functions ===
@@ -687,7 +764,7 @@ func getArgValue(args []string, flag string) string {
 // === Tests for terminal-notifier argument validation ===
 
 func TestBuildTerminalNotifierArgs_ArgumentOrder(t *testing.T) {
-	args := buildTerminalNotifierArgs("Title", "Message", "com.test.app", "")
+	args := buildTerminalNotifierArgs("Title", "Message", "com.test.app", "", true)
 
 	// Verify argument structure: each flag should be followed by its value
 	// Note: -sender was removed because it conflicts with -activate on macOS Sequoia
@@ -706,7 +783,7 @@ func TestBuildTerminalNotifierArgs_ArgumentOrder(t *testing.T) {
 }
 
 func TestBuildTerminalNotifierArgs_NoNilValues(t *testing.T) {
-	args := buildTerminalNotifierArgs("Title", "Message", "com.test", "")
+	args := buildTerminalNotifierArgs("Title", "Message", "com.test", "", true)
 
 	for i, arg := range args {
 		if arg == "" && i > 0 && args[i-1] != "-title" && args[i-1] != "-message" {
@@ -717,7 +794,7 @@ func TestBuildTerminalNotifierArgs_NoNilValues(t *testing.T) {
 }
 
 func TestBuildTerminalNotifierArgs_GroupIDFormat(t *testing.T) {
-	args := buildTerminalNotifierArgs("Title", "Message", "com.test", "")
+	args := buildTerminalNotifierArgs("Title", "Message", "com.test", "", true)
 
 	groupID := getArgValue(args, "-group")
 	if groupID == "" {
@@ -727,6 +804,17 @@ func TestBuildTerminalNotifierArgs_GroupIDFormat(t *testing.T) {
 	// Group ID should start with "claude-notif-"
 	if !strings.HasPrefix(groupID, "claude-notif-") {
 		t.Errorf("Group ID should start with 'claude-notif-', got: %s", groupID)
+	}
+}
+
+func TestBuildTerminalNotifierArgs_ClickToFocusDisabledOmitsAction(t *testing.T) {
+	args := buildTerminalNotifierArgs("Title", "Message", "com.test.app", "/tmp/project", false)
+
+	if getArgValue(args, "-activate") != "" {
+		t.Fatalf("Did not expect -activate when click-to-focus is disabled, got: %v", args)
+	}
+	if getArgValue(args, "-execute") != "" {
+		t.Fatalf("Did not expect -execute when click-to-focus is disabled, got: %v", args)
 	}
 }
 
@@ -753,7 +841,7 @@ func TestSendWithTerminalNotifier_PathNotFound(t *testing.T) {
 
 	// This may succeed if terminal-notifier is installed system-wide
 	// or fail if not - both are valid outcomes
-	err := n.sendWithTerminalNotifier("Test", "Message", "", "", false, "")
+	err := n.sendWithTerminalNotifier("Test", "Message", "", "", false, "", true)
 	_ = err // We just want to exercise the code path
 }
 
@@ -927,7 +1015,7 @@ func TestBuildTerminalNotifierArgs_AllKnownBundleIDs(t *testing.T) {
 	}
 
 	for _, bundleID := range bundleIDs {
-		args := buildTerminalNotifierArgs("Title", "Message", bundleID, "")
+		args := buildTerminalNotifierArgs("Title", "Message", bundleID, "", true)
 		actualBundleID := getArgValue(args, "-activate")
 		if actualBundleID != bundleID {
 			t.Errorf("Bundle ID mismatch: expected %s, got %s", bundleID, actualBundleID)
@@ -1106,7 +1194,7 @@ func TestBuildFocusScript_RegularTerminal_UsesFocusWindow(t *testing.T) {
 }
 
 func TestBuildTerminalNotifierArgs_WithCWD_UsesExecute(t *testing.T) {
-	args := buildTerminalNotifierArgs("Title", "Message", "com.microsoft.VSCode", "/home/user/proj")
+	args := buildTerminalNotifierArgs("Title", "Message", "com.microsoft.VSCode", "/home/user/proj", true)
 	if containsArg(args, "-activate", "com.microsoft.VSCode") {
 		t.Error("When cwd is set, should use -execute not -activate")
 	}
@@ -1117,7 +1205,7 @@ func TestBuildTerminalNotifierArgs_WithCWD_UsesExecute(t *testing.T) {
 }
 
 func TestBuildTerminalNotifierArgs_WithCWD_TerminalUsesFocusWindow(t *testing.T) {
-	args := buildTerminalNotifierArgs("Title", "Message", "com.googlecode.iterm2", "/home/user/my-project")
+	args := buildTerminalNotifierArgs("Title", "Message", "com.googlecode.iterm2", "/home/user/my-project", true)
 	execVal := getArgValue(args, "-execute")
 	if execVal == "" {
 		t.Error("-execute should be present when cwd is set")
@@ -1159,7 +1247,7 @@ func TestSendQuickNotification_EmptyFields(t *testing.T) {
 func TestBuildFocusScript_RegularTerminal_InvalidCWD_FallbackToActivate(t *testing.T) {
 	// When cwd is "." (invalid), buildFocusScript returns "" and
 	// buildTerminalNotifierArgs falls back to -activate (app-level focus)
-	args := buildTerminalNotifierArgs("Title", "Msg", "com.googlecode.iterm2", ".")
+	args := buildTerminalNotifierArgs("Title", "Msg", "com.googlecode.iterm2", ".", true)
 	if !containsArg(args, "-activate", "com.googlecode.iterm2") {
 		t.Error("Should fallback to -activate when cwd is invalid")
 	}

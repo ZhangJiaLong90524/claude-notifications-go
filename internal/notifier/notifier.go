@@ -49,9 +49,10 @@ func isTimeSensitiveStatus(status analyzer.Status) bool {
 	}
 }
 
-// SendDesktop sends a desktop notification using beeep (cross-platform)
-// On macOS with clickToFocus enabled, uses terminal-notifier for click-to-focus support
-// On Linux with clickToFocus enabled, uses background daemon for click-to-focus support
+// SendDesktop sends a desktop notification.
+// On macOS, it always prefers ClaudeNotifier/terminal-notifier to avoid
+// Script Editor attribution and optionally enables click-to-focus.
+// On Linux with clickToFocus enabled, it uses the background daemon.
 // cwd is the working directory of the project; used for window-specific focus. May be empty.
 func (n *Notifier) SendDesktop(status analyzer.Status, message, sessionID, cwd string) error {
 	// Send terminal bell for terminal tab indicators (e.g. Ghostty, tmux)
@@ -102,19 +103,28 @@ func (n *Notifier) SendDesktop(status analyzer.Status, message, sessionID, cwd s
 		appIcon = ""
 	}
 
-	// macOS: Try terminal-notifier for click-to-focus support
-	if platform.IsMacOS() && n.cfg.Notifications.Desktop.ClickToFocus {
+	// macOS: prefer ClaudeNotifier/terminal-notifier so the common path keeps the
+	// native app attribution. If that fails, fall back to beeep as a delivery
+	// safety net rather than dropping the notification entirely.
+	if platform.IsMacOS() {
 		if IsTerminalNotifierAvailable() {
-			if err := n.sendWithTerminalNotifier(title, cleanMessage, subtitle, sessionID, timeSensitive, cwd); err != nil {
-				logging.Warn("terminal-notifier failed, falling back to beeep: %v", err)
-				// Fall through to beeep
+			if err := n.sendWithTerminalNotifier(
+				title,
+				cleanMessage,
+				subtitle,
+				sessionID,
+				timeSensitive,
+				cwd,
+				n.cfg.Notifications.Desktop.ClickToFocus,
+			); err != nil {
+				logging.Warn("ClaudeNotifier failed on macOS, falling back to beeep: %v", err)
 			} else {
-				logging.Debug("Desktop notification sent via terminal-notifier: title=%s", title)
+				logging.Debug("Desktop notification sent via ClaudeNotifier/terminal-notifier: title=%s", title)
 				n.playSoundDetached(statusInfo.Sound)
 				return nil
 			}
 		} else {
-			logging.Debug("terminal-notifier not available, using beeep (run /claude-notifications-go:init to enable click-to-focus)")
+			logging.Warn("ClaudeNotifier not available on macOS, falling back to beeep (run /claude-notifications-go:init to install it)")
 		}
 	}
 
@@ -130,13 +140,13 @@ func (n *Notifier) SendDesktop(status analyzer.Status, message, sessionID, cwd s
 		}
 	}
 
-	// Standard path: beeep (Windows, macOS fallback, Linux fallback)
+	// Standard path: beeep (Windows, Linux fallback)
 	return n.sendWithBeeep(title, cleanMessage, appIcon, statusInfo.Sound)
 }
 
 // sendWithTerminalNotifier sends notification via terminal-notifier on macOS
 // with click-to-focus support (clicking notification activates the terminal)
-func (n *Notifier) sendWithTerminalNotifier(title, message, subtitle, sessionID string, timeSensitive bool, cwd string) error {
+func (n *Notifier) sendWithTerminalNotifier(title, message, subtitle, sessionID string, timeSensitive bool, cwd string, clickToFocus bool) error {
 	notifierPath, err := GetTerminalNotifierPath()
 	if err != nil {
 		return fmt.Errorf("terminal-notifier not found: %w", err)
@@ -152,7 +162,7 @@ func (n *Notifier) sendWithTerminalNotifier(title, message, subtitle, sessionID 
 		if muxName != "" {
 			logging.Debug("%s detected but target capture failed, falling back to -activate", muxName)
 		}
-		args = buildTerminalNotifierArgs(title, message, bundleID, cwd)
+		args = buildTerminalNotifierArgs(title, message, bundleID, cwd, clickToFocus)
 	}
 
 	// Append shared options: subtitle, threadID, timeSensitive, nosound
@@ -168,7 +178,7 @@ func (n *Notifier) sendWithTerminalNotifier(title, message, subtitle, sessionID 
 	// Always suppress sound in Swift — Go manages sound via audio player
 	args = append(args, "-nosound")
 
-	cmd := exec.Command(notifierPath, args...)
+	cmd := buildNotifierCommand(notifierPath, args)
 
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -179,25 +189,58 @@ func (n *Notifier) sendWithTerminalNotifier(title, message, subtitle, sessionID 
 	return nil
 }
 
+// buildNotifierCommand builds the execution command for a notifier binary.
+// ClaudeNotifier.app must be launched via LaunchServices so
+// UNUserNotificationCenter gets valid bundle metadata under hardened runtime.
+func buildNotifierCommand(notifierPath string, args []string) *exec.Cmd {
+	if appPath, ok := claudeNotifierAppPath(notifierPath); ok {
+		openArgs := []string{"-W", "-n", appPath, "--args", "-launchedViaLaunchServices"}
+		openArgs = append(openArgs, args...)
+		return exec.Command("open", openArgs...)
+	}
+
+	return exec.Command(notifierPath, args...)
+}
+
+// claudeNotifierAppPath extracts ClaudeNotifier.app from the embedded
+// terminal-notifier-modern executable path.
+func claudeNotifierAppPath(notifierPath string) (string, bool) {
+	cleanPath := filepath.Clean(notifierPath)
+	suffix := filepath.Join("Contents", "MacOS", "terminal-notifier-modern")
+	if !strings.HasSuffix(cleanPath, suffix) {
+		return "", false
+	}
+
+	bundlePath := strings.TrimSuffix(cleanPath, suffix)
+	bundlePath = strings.TrimSuffix(bundlePath, string(filepath.Separator))
+	if !strings.HasSuffix(bundlePath, "ClaudeNotifier.app") {
+		return "", false
+	}
+
+	return bundlePath, true
+}
+
 // buildTerminalNotifierArgs constructs command-line arguments for terminal-notifier.
 // When cwd is provided, uses -execute with a focus script instead of -activate.
 // Exported for testing purposes.
-func buildTerminalNotifierArgs(title, message, bundleID, cwd string) []string {
+func buildTerminalNotifierArgs(title, message, bundleID, cwd string, clickToFocus bool) []string {
 	args := []string{
 		"-title", title,
 		"-message", message,
 	}
 
-	// Note: -sender option removed because it conflicts with -activate on macOS Sequoia (15.x)
-	// Using -sender causes click-to-focus to stop working.
-	if cwd != "" {
-		if script := buildFocusScript(bundleID, cwd); script != "" {
-			args = append(args, "-execute", script)
+	if clickToFocus {
+		// Note: -sender option removed because it conflicts with -activate on macOS Sequoia (15.x)
+		// Using -sender causes click-to-focus to stop working.
+		if cwd != "" {
+			if script := buildFocusScript(bundleID, cwd); script != "" {
+				args = append(args, "-execute", script)
+			} else {
+				args = append(args, "-activate", bundleID)
+			}
 		} else {
 			args = append(args, "-activate", bundleID)
 		}
-	} else {
-		args = append(args, "-activate", bundleID)
 	}
 
 	// Add group ID to prevent notification stacking issues
@@ -301,7 +344,7 @@ func cwdToFileURL(cwd string) string {
 }
 
 // SendQuickNotification sends a one-off notification without requiring a
-// Notifier instance. Fallback chain: terminal-notifier → osascript.
+// Notifier instance.
 // executeCmd is the shell command run when the user clicks the notification (may be empty).
 func SendQuickNotification(title, message, executeCmd string) error {
 	if notifierPath, err := GetTerminalNotifierPath(); err == nil {
@@ -316,7 +359,7 @@ func SendQuickNotification(title, message, executeCmd string) error {
 			"-group", fmt.Sprintf("claude-quick-%d", time.Now().UnixNano()),
 			"-nosound",
 		)
-		if output, err := exec.Command(notifierPath, args...).CombinedOutput(); err == nil {
+		if output, err := buildNotifierCommand(notifierPath, args).CombinedOutput(); err == nil {
 			return nil
 		} else {
 			logging.Debug("terminal-notifier failed: %v, output: %s", err, string(output))

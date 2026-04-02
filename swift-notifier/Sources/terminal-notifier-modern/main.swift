@@ -2,6 +2,9 @@ import AppKit
 import Foundation
 import UserNotifications
 
+private let launchServicesMarker = "-launchedViaLaunchServices"
+private let notificationTimeoutSeconds = 10.0
+
 let arguments = Array(CommandLine.arguments.dropFirst())
 
 if arguments.contains("-help") || arguments.contains("--help") {
@@ -30,91 +33,81 @@ func runSendMode(arguments: [String]) {
     do {
         config = try ArgumentParser.parse(arguments)
     } catch {
-        fputs("Error: \(error)\n", stderr)
-        exit(ExitCode.invalidArgs)
+        failAndExit(error)
+        return
     }
 
-    // Without a valid app bundle, UNUserNotificationCenter.current() crashes
-    // with "bundleProxyForCurrentProcess is nil". Use osascript directly.
+    guard arguments.contains(launchServicesMarker) else {
+        failAndExit("ClaudeNotifier must be launched via LaunchServices (use 'open -W -n ClaudeNotifier.app --args ...')")
+        return
+    }
+
+    // Without valid app bundle metadata, UNUserNotificationCenter may crash with
+    // "bundleProxyForCurrentProcess is nil".
     guard Bundle.main.bundleIdentifier != nil else {
-        OsascriptNotificationService().send(config: config) { result in
-            switch result {
-            case .success:
-                exit(ExitCode.success)
-            case .failure(let error):
-                fputs("Error: \(error)\n", stderr)
-                exit(ExitCode.failed)
-            }
-        }
+        failAndExit("ClaudeNotifier bundle metadata unavailable; LaunchServices did not provide a bundle proxy")
+        return
+    }
+
+    guard Bundle.main.bundleURL.pathExtension == "app" else {
+        failAndExit("ClaudeNotifier is not running from an app bundle")
         return
     }
 
     let app = NSApplication.shared
     app.setActivationPolicy(.accessory)
 
-    // Safety timeout on a background queue — fires even if main queue is blocked.
-    // UNUserNotificationCenter may hang when the .app is launched from CLI
-    // (not via LaunchServices), especially on macOS Sequoia.
-    // Falls back to osascript which always works (no permission needed).
-    DispatchQueue.global().asyncAfter(deadline: .now() + 3.0) {
-        fputs("Warning: UNUserNotificationCenter timed out, using osascript fallback\n", stderr)
-        OsascriptNotificationService().send(config: config) { _ in
-            exit(ExitCode.success)
-        }
-    }
-
-    // Schedule all async work on the main queue — no data races.
-    // UNUserNotificationCenter requires the run loop to be active,
-    // so register() and all send logic must run AFTER app.run() starts.
     DispatchQueue.main.async {
         NotificationCategory.register()
         checkAuthAndSend(config: config)
     }
 
-    // Run event loop (processes main queue dispatches + RunLoop sources)
     app.run()
 }
 
+func failAndExit(_ error: Error) {
+    fputs("Error: \(error)\n", stderr)
+    exit(ExitCode.failed)
+}
+
+func failAndExit(_ message: String) {
+    fputs("Error: \(message)\n", stderr)
+    exit(ExitCode.failed)
+}
+
 func checkAuthAndSend(config: NotificationConfig) {
-    UNUserNotificationCenter.current().getNotificationSettings { settings in
-        DispatchQueue.main.async {
-            handleAuthStatus(settings.authorizationStatus, config: config)
-        }
-    }
-}
-
-func handleAuthStatus(_ status: UNAuthorizationStatus, config: NotificationConfig) {
-    if status == .notDetermined {
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, _ in
-            DispatchQueue.main.async {
-                let newStatus: UNAuthorizationStatus = granted ? .authorized : .denied
-                sendNotification(config: config, authStatus: newStatus)
-            }
-        }
-    } else {
-        sendNotification(config: config, authStatus: status)
-    }
-}
-
-func sendNotification(config: NotificationConfig, authStatus: UNAuthorizationStatus) {
-    let service: NotificationSending
-    if authStatus == .authorized || authStatus == .provisional {
-        service = UNNotificationService()
-    } else {
-        service = OsascriptNotificationService()
-    }
-
-    service.send(config: config) { result in
+    PermissionManager.ensurePermission { result in
         DispatchQueue.main.async {
             switch result {
             case .success:
-                // Small delay for delivery, then exit
+                sendNotification(config: config)
+            case .failure(let error):
+                failAndExit(error)
+            }
+        }
+    }
+}
+
+func sendNotification(config: NotificationConfig) {
+    let service = UNNotificationService()
+
+    let timeoutWorkItem = DispatchWorkItem {
+        failAndExit("UNUserNotificationCenter timed out after \(Int(notificationTimeoutSeconds)) seconds")
+    }
+
+    DispatchQueue.main.asyncAfter(deadline: .now() + notificationTimeoutSeconds, execute: timeoutWorkItem)
+
+    service.send(config: config) { result in
+        DispatchQueue.main.async {
+            timeoutWorkItem.cancel()
+
+            switch result {
+            case .success:
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                     exit(ExitCode.success)
                 }
             case .failure(let error):
-                fputs("Error: \(error)\n", stderr)
-                exit(ExitCode.failed)
+                failAndExit(error)
             }
         }
     }
