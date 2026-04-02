@@ -6,6 +6,8 @@ import (
 	"strings"
 )
 
+const claudeNotificationsDesktopEntryID = "claude-notifications"
+
 // escapeJS escapes a string for safe interpolation into JavaScript single-quoted strings.
 // Prevents JS injection when values are passed to GNOME Shell.Eval.
 func escapeJS(s string) string {
@@ -50,6 +52,56 @@ func GetAppID(terminalName string) string {
 // This is the value expected by the freedesktop "desktop-entry" notification hint.
 func GetDesktopEntryID(terminalName string) string {
 	return strings.TrimSuffix(GetAppID(terminalName), ".desktop")
+}
+
+// GetNotificationDesktopEntryID returns the desktop-entry hint value to use for
+// notifications. GNOME on Wayland shows a long-running loading cursor when the
+// clicked notification advertises the terminal/editor desktop entry and the app
+// never consumes the generated activation token. A dedicated hidden desktop
+// file with StartupNotify=false avoids that spinner while preserving click
+// handling via our daemon.
+func GetNotificationDesktopEntryID(terminalName string) string {
+	if isGnomeWaylandSession() && hasClaudeNotificationsDesktopEntry() {
+		return claudeNotificationsDesktopEntryID
+	}
+	return GetDesktopEntryID(terminalName)
+}
+
+func isGnomeWaylandSession() bool {
+	if !strings.EqualFold(strings.TrimSpace(os.Getenv("XDG_SESSION_TYPE")), "wayland") {
+		return false
+	}
+
+	for _, desktop := range []string{
+		os.Getenv("XDG_CURRENT_DESKTOP"),
+		os.Getenv("XDG_SESSION_DESKTOP"),
+	} {
+		for _, part := range strings.Split(desktop, ":") {
+			if strings.EqualFold(strings.TrimSpace(part), "GNOME") {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+func hasClaudeNotificationsDesktopEntry() bool {
+	_, err := os.Stat(getClaudeNotificationsDesktopEntryPath())
+	return err == nil
+}
+
+func getClaudeNotificationsDesktopEntryPath() string {
+	dataHome := strings.TrimSpace(os.Getenv("XDG_DATA_HOME"))
+	if dataHome == "" {
+		homeDir, err := os.UserHomeDir()
+		if err != nil || strings.TrimSpace(homeDir) == "" {
+			return ""
+		}
+		dataHome = homeDir + "/.local/share"
+	}
+
+	return dataHome + "/applications/" + claudeNotificationsDesktopEntryID + ".desktop"
 }
 
 // GetWlrctlAppID returns the wlroots app_id for a terminal name.

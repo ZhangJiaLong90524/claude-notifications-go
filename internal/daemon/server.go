@@ -266,7 +266,7 @@ func (s *Server) handleNotification(req *NotifyRequest) (*NotifyResponse, error)
 			{Key: "default", Label: "Focus Terminal"},
 		},
 		Hints: map[string]dbus.Variant{
-			"desktop-entry":  dbus.MakeVariant(GetDesktopEntryID(focusTarget)),
+			"desktop-entry":  dbus.MakeVariant(GetNotificationDesktopEntryID(focusTarget)),
 			"suppress-sound": dbus.MakeVariant(true),
 		},
 	}

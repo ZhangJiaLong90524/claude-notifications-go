@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -9,7 +10,18 @@ import (
 // saveTerminalEnv saves all terminal-related env vars and returns a restore function.
 func saveTerminalEnv(t *testing.T) func() {
 	t.Helper()
-	vars := []string{"TERM_PROGRAM", "VSCODE_INJECTION", "VSCODE_GIT_IPC_HANDLE", "GNOME_TERMINAL_SCREEN", "GNOME_TERMINAL_SERVICE", "TERMINATOR_UUID", "WINDOWID"}
+	vars := []string{
+		"TERM_PROGRAM",
+		"VSCODE_INJECTION",
+		"VSCODE_GIT_IPC_HANDLE",
+		"GNOME_TERMINAL_SCREEN",
+		"GNOME_TERMINAL_SERVICE",
+		"TERMINATOR_UUID",
+		"WINDOWID",
+		"XDG_SESSION_TYPE",
+		"XDG_CURRENT_DESKTOP",
+		"XDG_SESSION_DESKTOP",
+	}
 	type envState struct {
 		value string
 		isSet bool
@@ -224,6 +236,83 @@ func TestGetAppID_EmptyString(t *testing.T) {
 	result := GetAppID("")
 	if result != ".desktop" {
 		t.Errorf("GetAppID('') = %q, want %q", result, ".desktop")
+	}
+}
+
+func TestGetNotificationDesktopEntryID_GnomeWaylandUsesClaudeDesktopFile(t *testing.T) {
+	restore := saveTerminalEnv(t)
+	defer restore()
+
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	t.Setenv("XDG_SESSION_TYPE", "wayland")
+	t.Setenv("XDG_CURRENT_DESKTOP", "ubuntu:GNOME")
+	desktopFile := getClaudeNotificationsDesktopEntryPath()
+	if err := os.MkdirAll(filepath.Dir(desktopFile), 0o755); err != nil {
+		t.Fatalf("MkdirAll failed: %v", err)
+	}
+	if err := os.WriteFile(desktopFile, []byte("[Desktop Entry]\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	if got := GetNotificationDesktopEntryID("code"); got != claudeNotificationsDesktopEntryID {
+		t.Errorf("GetNotificationDesktopEntryID() = %q, want %q", got, claudeNotificationsDesktopEntryID)
+	}
+}
+
+func TestGetNotificationDesktopEntryID_GnomeWaylandViaSessionDesktop(t *testing.T) {
+	restore := saveTerminalEnv(t)
+	defer restore()
+
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	t.Setenv("XDG_SESSION_TYPE", "wayland")
+	t.Setenv("XDG_SESSION_DESKTOP", "gnome")
+	desktopFile := getClaudeNotificationsDesktopEntryPath()
+	if err := os.MkdirAll(filepath.Dir(desktopFile), 0o755); err != nil {
+		t.Fatalf("MkdirAll failed: %v", err)
+	}
+	if err := os.WriteFile(desktopFile, []byte("[Desktop Entry]\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	if got := GetNotificationDesktopEntryID("gnome-terminal"); got != claudeNotificationsDesktopEntryID {
+		t.Errorf("GetNotificationDesktopEntryID() = %q, want %q", got, claudeNotificationsDesktopEntryID)
+	}
+}
+
+func TestGetNotificationDesktopEntryID_GnomeWaylandWithoutDesktopFileFallsBack(t *testing.T) {
+	restore := saveTerminalEnv(t)
+	defer restore()
+
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	t.Setenv("XDG_SESSION_TYPE", "wayland")
+	t.Setenv("XDG_CURRENT_DESKTOP", "GNOME")
+
+	if got := GetNotificationDesktopEntryID("code"); got != "code" {
+		t.Errorf("GetNotificationDesktopEntryID() = %q, want %q", got, "code")
+	}
+}
+
+func TestGetNotificationDesktopEntryID_NonGnomeWaylandKeepsAppDesktopEntry(t *testing.T) {
+	restore := saveTerminalEnv(t)
+	defer restore()
+
+	t.Setenv("XDG_SESSION_TYPE", "wayland")
+	t.Setenv("XDG_CURRENT_DESKTOP", "KDE")
+
+	if got := GetNotificationDesktopEntryID("code"); got != "code" {
+		t.Errorf("GetNotificationDesktopEntryID() = %q, want %q", got, "code")
+	}
+}
+
+func TestGetNotificationDesktopEntryID_GnomeX11KeepsAppDesktopEntry(t *testing.T) {
+	restore := saveTerminalEnv(t)
+	defer restore()
+
+	t.Setenv("XDG_SESSION_TYPE", "x11")
+	t.Setenv("XDG_CURRENT_DESKTOP", "GNOME")
+
+	if got := GetNotificationDesktopEntryID("code"); got != "code" {
+		t.Errorf("GetNotificationDesktopEntryID() = %q, want %q", got, "code")
 	}
 }
 

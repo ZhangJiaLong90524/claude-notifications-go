@@ -1267,6 +1267,44 @@ install_gnome_activate_window_extension() {
     fi
 }
 
+# Install a hidden desktop entry used for GNOME/Wayland notifications.
+# StartupNotify=false prevents GNOME Shell from creating an activation token
+# that would otherwise leave a loading cursor spinning after our daemon has
+# already focused the target window.
+install_linux_notification_desktop_entry() {
+    [ "$PLATFORM" = "linux" ] || return 0
+
+    local data_home="${XDG_DATA_HOME:-$HOME/.local/share}"
+    local applications_dir="${data_home}/applications"
+    local desktop_file="${applications_dir}/claude-notifications.desktop"
+    local tmp_file="${desktop_file}.tmp.$$"
+
+    if ! mkdir -p "$applications_dir" 2>/dev/null; then
+        echo -e "${YELLOW}⚠ Could not create ${applications_dir} for notification desktop entry${NC}"
+        return 1
+    fi
+
+    cat > "$tmp_file" << EOF
+[Desktop Entry]
+Name=Claude Notifications
+Type=Application
+Icon=utilities-terminal
+Exec=/usr/bin/true
+NoDisplay=true
+StartupNotify=false
+Terminal=false
+EOF
+
+    if mv "$tmp_file" "$desktop_file" 2>/dev/null; then
+        echo -e "${GREEN}✓${NC} Hidden desktop entry installed for GNOME/Wayland notifications"
+        return 0
+    fi
+
+    rm -f "$tmp_file" 2>/dev/null || true
+    echo -e "${YELLOW}⚠ Could not install hidden notification desktop entry${NC}"
+    return 1
+}
+
 # Main installation flow
 main() {
     echo ""
@@ -1323,6 +1361,7 @@ main() {
 
         # On Linux, also check GNOME activate-window extension
         if [ "$PLATFORM" = "linux" ]; then
+            install_linux_notification_desktop_entry || true
             if install_gnome_activate_window_extension; then
                 GNOME_EXT_INSTALLED=true
             fi
@@ -1435,6 +1474,7 @@ main() {
     # On Linux, install GNOME activate-window-by-title extension for click-to-focus
     GNOME_EXT_INSTALLED=false
     if [ "$PLATFORM" = "linux" ]; then
+        install_linux_notification_desktop_entry || true
         if install_gnome_activate_window_extension; then
             GNOME_EXT_INSTALLED=true
         fi
