@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.36.3] - 2026-04-07
+
+### Fixed
+- **iTerm2: exact click-to-focus for tabs and split panes** — plain iTerm2 notifications now target the exact tab or split pane via the existing Python helper instead of only doing window-level focus by `cwd`; the tmux+iTerm2 path also safely targets the correct client/tab in multi-tab setups, avoiding cross-tab focus jumps and preserving fallbacks when the helper is unavailable ([#63](https://github.com/777genius/claude-notifications-go/issues/63), [#66](https://github.com/777genius/claude-notifications-go/pull/66))
+- **iTerm2: clearer setup remediation when Python API is disabled** — the notifier now runs a preflight healthcheck for the iTerm2 Python API and shows a throttled one-time notification telling the user to enable it in iTerm2 settings, instead of silently degrading exact targeting
+- **macOS: notification permission remediation is more robust** — native notifier permission problems now surface cleaner remediation/fallback behavior, with cross-platform tests updated to keep CI stable ([#64](https://github.com/777genius/claude-notifications-go/pull/64))
+
 ## [1.36.2] - 2026-04-02
 
 ### Fixed
