@@ -14,8 +14,6 @@
     <string>2.0.0</string>
     <key>CFBundleShortVersionString</key>
     <string>2.0.0</string>
-    <key>LSUIElement</key>
-    <true/>
     <key>LSMinimumSystemVersion</key>
     <string>10.15</string>
     <key>CFBundleIconFile</key>

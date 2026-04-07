@@ -71,6 +71,20 @@ def normalized_pane(target_pane):
     return f"%{target}"
 
 
+def normalized_termid(termid):
+    target = str(termid or "").strip()
+    if not target:
+        return ""
+
+    # iTerm2 exports ITERM_SESSION_ID as wXtYpZ:UUID, while the Python API
+    # exposes session variable "termid" as wXtYpZ.UUID. Normalize both forms
+    # so exact tab/pane targeting keeps working across notification clicks.
+    prefix, separator, suffix = target.partition(":")
+    if separator and prefix.startswith("w") and suffix:
+        return f"{prefix}.{suffix}"
+    return target
+
+
 def run_tmux(tmux_path, socket_path, tmux_args):
     cmd = [tmux_path]
     if socket_path:
@@ -186,12 +200,13 @@ async def select_session(connection, target_termid, target_cwd):
     2. Unique cwd match as a safe fallback
     """
     app = await iterm2.async_get_app(connection)
+    target_termid = normalized_termid(target_termid)
     cwd_matches = []
 
     for window in app.windows:
         for tab in window.tabs:
             for session in tab.sessions:
-                termid = await session.async_get_variable("termid")
+                termid = normalized_termid(await session.async_get_variable("termid"))
                 if target_termid and termid == target_termid:
                     await app.async_activate(
                         raise_all_windows=False,
