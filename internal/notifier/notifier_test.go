@@ -1302,6 +1302,7 @@ func TestBuildFocusScript_RegularTerminal_UsesFocusWindow(t *testing.T) {
 
 func TestBuildFocusScript_Iterm2PrefersExactSessionHelper(t *testing.T) {
 	setupFakeiTerm2Env(t)
+	overrideIterm2Healthcheck(t, iTerm2HelperReady)
 	t.Setenv(iTerm2SessionIDEnv, "w0t0p0:abc-123")
 
 	script := buildFocusScript("com.googlecode.iterm2", "/home/user/my-project")
@@ -1325,6 +1326,7 @@ func TestBuildFocusScript_Iterm2PrefersExactSessionHelper(t *testing.T) {
 
 func TestBuildFocusScript_Iterm2WithoutCWDStillTargetsSession(t *testing.T) {
 	setupFakeiTerm2Env(t)
+	overrideIterm2Healthcheck(t, iTerm2HelperReady)
 	t.Setenv(iTerm2SessionIDEnv, "w0t0p1:xyz")
 
 	script := buildFocusScript("com.googlecode.iterm2", "")
@@ -1436,6 +1438,7 @@ func TestBuildTerminalNotifierArgs_WithCWD_TerminalUsesFocusWindow(t *testing.T)
 
 func TestBuildTerminalNotifierArgs_Iterm2SessionIDUsesExecuteWithoutCWD(t *testing.T) {
 	setupFakeiTerm2Env(t)
+	overrideIterm2Healthcheck(t, iTerm2HelperReady)
 	t.Setenv(iTerm2SessionIDEnv, "w0t0p7:test")
 
 	args := buildTerminalNotifierArgs("Title", "Message", "com.googlecode.iterm2", "", true)

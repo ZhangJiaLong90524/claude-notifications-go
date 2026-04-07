@@ -90,6 +90,17 @@ func withIsolatedEnv(t *testing.T) {
 	})
 }
 
+func overrideIterm2Healthcheck(t *testing.T, health iTerm2HelperHealth) {
+	t.Helper()
+	original := iTerm2PythonAPIHealthcheck
+	iTerm2PythonAPIHealthcheck = func(string, string) iTerm2HelperHealth {
+		return health
+	}
+	t.Cleanup(func() {
+		iTerm2PythonAPIHealthcheck = original
+	})
+}
+
 func TestGetiTerm2PythonEnv_NoVenv(t *testing.T) {
 	withIsolatedEnv(t)
 	_, _, ok := getiTerm2PythonEnv()
@@ -108,6 +119,7 @@ func TestBuildTmuxCCNotifierArgs_NoVenv(t *testing.T) {
 
 func TestBuildTmuxCCNotifierArgs_StripsPanePrefix(t *testing.T) {
 	setupFakeiTerm2Env(t)
+	overrideIterm2Healthcheck(t, iTerm2HelperReady)
 
 	args, err := buildTmuxCCNotifierArgs("Title", "Msg", "%42", "com.test")
 	if err != nil {
@@ -122,6 +134,7 @@ func TestBuildTmuxCCNotifierArgs_StripsPanePrefix(t *testing.T) {
 
 func TestBuildTmuxCCNotifierArgs_ContainsActivate(t *testing.T) {
 	setupFakeiTerm2Env(t)
+	overrideIterm2Healthcheck(t, iTerm2HelperReady)
 
 	args, err := buildTmuxCCNotifierArgs("Title", "Msg", "%42", "com.googlecode.iterm2")
 	if err != nil {
@@ -142,6 +155,7 @@ func TestBuildTmuxCCNotifierArgs_ContainsActivate(t *testing.T) {
 
 func TestBuildTmuxCCNotifierArgs_HasGroup(t *testing.T) {
 	setupFakeiTerm2Env(t)
+	overrideIterm2Healthcheck(t, iTerm2HelperReady)
 
 	args, err := buildTmuxCCNotifierArgs("Title", "Msg", "%10", "com.test")
 	if err != nil {
@@ -159,6 +173,7 @@ func TestBuildTmuxCCNotifierArgs_HasGroup(t *testing.T) {
 
 func TestBuildTmuxCCNotifierArgs_PaneWithoutPercent(t *testing.T) {
 	setupFakeiTerm2Env(t)
+	overrideIterm2Healthcheck(t, iTerm2HelperReady)
 
 	args, err := buildTmuxCCNotifierArgs("Title", "Msg", "42", "com.test")
 	if err != nil {
@@ -173,6 +188,7 @@ func TestBuildTmuxCCNotifierArgs_PaneWithoutPercent(t *testing.T) {
 
 func TestBuildTmuxCCNotifierArgs_EmptyPaneTarget(t *testing.T) {
 	setupFakeiTerm2Env(t)
+	overrideIterm2Healthcheck(t, iTerm2HelperReady)
 
 	args, err := buildTmuxCCNotifierArgs("Title", "Msg", "", "com.test")
 	if err != nil {
@@ -188,6 +204,7 @@ func TestBuildTmuxCCNotifierArgs_EmptyPaneTarget(t *testing.T) {
 
 func TestBuildTmuxClickArgs_Iterm2PlainTmuxUsesHelper(t *testing.T) {
 	setupFakeiTerm2Env(t)
+	overrideIterm2Healthcheck(t, iTerm2HelperReady)
 
 	oldTmux := os.Getenv("TMUX")
 	oldPane := os.Getenv("TMUX_PANE")

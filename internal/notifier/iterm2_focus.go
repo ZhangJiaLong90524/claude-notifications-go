@@ -25,6 +25,7 @@ var sendQuickNotification = SendQuickNotification
 var (
 	iTerm2HealthcheckSuccessTTL = 10 * time.Minute
 	iTerm2PythonAPIPromptTTL    = 24 * time.Hour
+	iTerm2PythonAPIHealthcheck  = checkIterm2PythonAPIHealth
 )
 
 type iTerm2HelperHealth int
@@ -44,7 +45,7 @@ func buildIterm2FocusScript(cwd string) string {
 	sessionID := os.Getenv(iTerm2SessionIDEnv)
 	pythonPath, scriptPath, ok := getiTerm2PythonEnv()
 	if ok && (sessionID != "" || isUsableFocusCWD(cwd)) &&
-		checkIterm2PythonAPIHealth(pythonPath, scriptPath) == iTerm2HelperReady {
+		iTerm2PythonAPIHealthcheck(pythonPath, scriptPath) == iTerm2HelperReady {
 		helperCmd := fmt.Sprintf("%s %s",
 			shellQuote(pythonPath),
 			shellQuote(scriptPath),
