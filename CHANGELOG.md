@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.36.4] - 2026-04-07
+
+### Fixed
+- **iTerm2: notification clicks now reliably bring iTerm2 to the foreground before selecting the exact tab or split pane** — the helper now explicitly activates the iTerm2 app before activating the target tab/session, fixing the post-`1.36.3` case where the right tab could be selected internally but the iTerm2 window stayed behind another app when the notification was clicked
+
 ## [1.36.3] - 2026-04-07
 
 ### Fixed
