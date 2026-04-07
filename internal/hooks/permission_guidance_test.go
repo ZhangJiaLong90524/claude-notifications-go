@@ -3,6 +3,7 @@ package hooks
 import (
 	"io"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
@@ -43,7 +44,9 @@ func TestMaybeEmitDesktopPermissionGuidance_RateLimited(t *testing.T) {
 		t.Skip("macOS-specific permission guidance")
 	}
 
-	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	tempHome := t.TempDir()
+	t.Setenv("HOME", tempHome)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(tempHome, ".cache"))
 
 	handler := &Handler{}
 	err := &notifier.NotificationPermissionDeniedError{Details: "Error: Notification permission denied. Enable in System Settings > Notifications."}

@@ -4,8 +4,10 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -744,8 +746,8 @@ func TestBuildNotifierCommand_UsesDirectBinaryForLegacy(t *testing.T) {
 }
 
 func TestRunClaudeNotifierApp_PermissionDeniedError(t *testing.T) {
-	restorePath := installFakeOpen(t, fmt.Sprintf("Error: %s", macOSPermissionDeniedMessage), 0)
-	defer restorePath()
+	restoreExecCommand := installFakeOpen(t, fmt.Sprintf("Error: %s", macOSPermissionDeniedMessage), 0)
+	defer restoreExecCommand()
 
 	err := runClaudeNotifierApp("/tmp/ClaudeNotifier.app", []string{"-title", "Test"})
 	if err == nil {
@@ -759,8 +761,8 @@ func TestRunClaudeNotifierApp_PermissionDeniedError(t *testing.T) {
 }
 
 func TestRunClaudeNotifierApp_ReportsGenericStderr(t *testing.T) {
-	restorePath := installFakeOpen(t, "Error: unexpected notifier failure", 0)
-	defer restorePath()
+	restoreExecCommand := installFakeOpen(t, "Error: unexpected notifier failure", 0)
+	defer restoreExecCommand()
 
 	err := runClaudeNotifierApp("/tmp/ClaudeNotifier.app", []string{"-title", "Test"})
 	if err == nil {
@@ -779,47 +781,71 @@ func TestRunClaudeNotifierApp_ReportsGenericStderr(t *testing.T) {
 func installFakeOpen(t *testing.T, stderrMessage string, exitCode int) func() {
 	t.Helper()
 
-	tempDir := t.TempDir()
-	scriptPath := filepath.Join(tempDir, "open")
-	script := fmt.Sprintf(`#!/bin/sh
-stderr_path=""
-stdout_path=""
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    -o)
-      stdout_path="$2"
-      shift 2
-      ;;
-    --stderr)
-      stderr_path="$2"
-      shift 2
-      ;;
-    *)
-      shift
-      ;;
-  esac
-done
-
-if [ -n "$stdout_path" ]; then
-  : > "$stdout_path"
-fi
-if [ -n "$stderr_path" ]; then
-  printf '%%s' %q > "$stderr_path"
-fi
-exit %d
-`, stderrMessage, exitCode)
-	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
-		t.Fatalf("failed to write fake open script: %v", err)
-	}
-
-	originalPath := os.Getenv("PATH")
-	if err := os.Setenv("PATH", tempDir+string(os.PathListSeparator)+originalPath); err != nil {
-		t.Fatalf("failed to update PATH: %v", err)
+	originalExecCommand := execCommand
+	execCommand = func(name string, args ...string) *exec.Cmd {
+		cmdArgs := []string{"-test.run=TestHelperProcess", "--", name}
+		cmdArgs = append(cmdArgs, args...)
+		cmd := exec.Command(os.Args[0], cmdArgs...)
+		cmd.Env = append(os.Environ(),
+			"GO_WANT_HELPER_PROCESS=1",
+			"GO_HELPER_STDERR="+stderrMessage,
+			"GO_HELPER_EXIT_CODE="+strconv.Itoa(exitCode),
+		)
+		return cmd
 	}
 
 	return func() {
-		_ = os.Setenv("PATH", originalPath)
+		execCommand = originalExecCommand
 	}
+}
+
+func TestHelperProcess(t *testing.T) {
+	if os.Getenv("GO_WANT_HELPER_PROCESS") != "1" {
+		return
+	}
+
+	args := os.Args
+	doubleDash := -1
+	for i, arg := range args {
+		if arg == "--" {
+			doubleDash = i
+			break
+		}
+	}
+	if doubleDash == -1 || doubleDash+1 >= len(args) {
+		os.Exit(97)
+	}
+
+	helperArgs := args[doubleDash+2:]
+	var stdoutPath string
+	var stderrPath string
+	for i := 0; i < len(helperArgs); i++ {
+		switch helperArgs[i] {
+		case "-o":
+			if i+1 < len(helperArgs) {
+				stdoutPath = helperArgs[i+1]
+				i++
+			}
+		case "--stderr":
+			if i+1 < len(helperArgs) {
+				stderrPath = helperArgs[i+1]
+				i++
+			}
+		}
+	}
+
+	if stdoutPath != "" {
+		_ = os.WriteFile(stdoutPath, []byte{}, 0o644)
+	}
+	if stderrPath != "" {
+		_ = os.WriteFile(stderrPath, []byte(os.Getenv("GO_HELPER_STDERR")), 0o644)
+	}
+
+	exitCode, err := strconv.Atoi(os.Getenv("GO_HELPER_EXIT_CODE"))
+	if err != nil {
+		exitCode = 0
+	}
+	os.Exit(exitCode)
 }
 
 func containsArg(args []string, flag, value string) bool {

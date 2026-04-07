@@ -24,6 +24,8 @@ import (
 
 const macOSPermissionDeniedMessage = "Notification permission denied. Enable in System Settings > Notifications."
 
+var execCommand = exec.Command
+
 // NotificationPermissionDeniedError indicates macOS rejected the native
 // ClaudeNotifier path because notification permission is denied for the app.
 type NotificationPermissionDeniedError struct {
@@ -240,7 +242,7 @@ func runClaudeNotifierApp(appPath string, args []string) error {
 	}
 	openArgs = append(openArgs, args...)
 
-	cmd := exec.Command("open", openArgs...)
+	cmd := execCommand("open", openArgs...)
 	runErr := cmd.Run()
 
 	stderrOutput, _ := os.ReadFile(stderrPath)
