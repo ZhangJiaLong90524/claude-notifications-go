@@ -1,6 +1,7 @@
 package notifier
 
 import (
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -20,6 +21,21 @@ import (
 	"github.com/777genius/claude-notifications/internal/logging"
 	"github.com/777genius/claude-notifications/internal/platform"
 )
+
+const macOSPermissionDeniedMessage = "Notification permission denied. Enable in System Settings > Notifications."
+
+// NotificationPermissionDeniedError indicates macOS rejected the native
+// ClaudeNotifier path because notification permission is denied for the app.
+type NotificationPermissionDeniedError struct {
+	Details string
+}
+
+func (e *NotificationPermissionDeniedError) Error() string {
+	if strings.TrimSpace(e.Details) == "" {
+		return macOSPermissionDeniedMessage
+	}
+	return e.Details
+}
 
 // Notifier sends desktop notifications
 type Notifier struct {
@@ -117,6 +133,11 @@ func (n *Notifier) SendDesktop(status analyzer.Status, message, sessionID, cwd s
 				cwd,
 				n.cfg.Notifications.Desktop.ClickToFocus,
 			); err != nil {
+				var permissionErr *NotificationPermissionDeniedError
+				if errors.As(err, &permissionErr) {
+					logging.Warn("ClaudeNotifier permission denied on macOS: %v", err)
+					return err
+				}
 				logging.Warn("ClaudeNotifier failed on macOS, falling back to beeep: %v", err)
 			} else {
 				logging.Debug("Desktop notification sent via ClaudeNotifier/terminal-notifier: title=%s", title)
@@ -178,6 +199,14 @@ func (n *Notifier) sendWithTerminalNotifier(title, message, subtitle, sessionID 
 	// Always suppress sound in Swift — Go manages sound via audio player
 	args = append(args, "-nosound")
 
+	if appPath, ok := claudeNotifierAppPath(notifierPath); ok {
+		if err := runClaudeNotifierApp(appPath, args); err != nil {
+			return err
+		}
+		logging.Debug("ClaudeNotifier executed via LaunchServices: bundleID=%s", bundleID)
+		return nil
+	}
+
 	cmd := buildNotifierCommand(notifierPath, args)
 
 	output, err := cmd.CombinedOutput()
@@ -186,6 +215,51 @@ func (n *Notifier) sendWithTerminalNotifier(title, message, subtitle, sessionID 
 	}
 
 	logging.Debug("terminal-notifier executed: bundleID=%s", bundleID)
+	return nil
+}
+
+func runClaudeNotifierApp(appPath string, args []string) error {
+	tempDir, err := os.MkdirTemp("", "claude-notifier-open-*")
+	if err != nil {
+		return fmt.Errorf("failed to create temp dir for ClaudeNotifier launch: %w", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	stdoutPath := filepath.Join(tempDir, "stdout.log")
+	stderrPath := filepath.Join(tempDir, "stderr.log")
+
+	openArgs := []string{
+		"-W",
+		"-n",
+		"-i", "/dev/null",
+		"-o", stdoutPath,
+		"--stderr", stderrPath,
+		appPath,
+		"--args",
+		"-launchedViaLaunchServices",
+	}
+	openArgs = append(openArgs, args...)
+
+	cmd := exec.Command("open", openArgs...)
+	runErr := cmd.Run()
+
+	stderrOutput, _ := os.ReadFile(stderrPath)
+	stderrText := strings.TrimSpace(string(stderrOutput))
+	if strings.Contains(stderrText, macOSPermissionDeniedMessage) {
+		return &NotificationPermissionDeniedError{Details: stderrText}
+	}
+
+	if runErr != nil {
+		if stderrText != "" {
+			return fmt.Errorf("ClaudeNotifier open failed: %w, stderr: %s", runErr, stderrText)
+		}
+		return fmt.Errorf("ClaudeNotifier open failed: %w", runErr)
+	}
+
+	if stderrText != "" {
+		return fmt.Errorf("ClaudeNotifier reported an error: %s", stderrText)
+	}
+
 	return nil
 }
 

@@ -108,6 +108,15 @@ func GetTerminalNotifierPath() (string, error) {
 			return modernPath, nil
 		}
 
+		// Development checkout fallback: make build-notifier writes the bundle to
+		// swift-notifier/ClaudeNotifier.app, while plugin-dir runs set
+		// CLAUDE_PLUGIN_ROOT to the repo root.
+		devPath := filepath.Join(pluginRoot, "swift-notifier",
+			"ClaudeNotifier.app", "Contents", "MacOS", "terminal-notifier-modern")
+		if platform.FileExists(devPath) {
+			return devPath, nil
+		}
+
 		// 2. Check legacy terminal-notifier
 		legacyPath := filepath.Join(pluginRoot, "bin",
 			"terminal-notifier.app", "Contents", "MacOS", "terminal-notifier")

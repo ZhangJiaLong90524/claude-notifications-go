@@ -1,6 +1,8 @@
 package notifier
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -741,7 +743,84 @@ func TestBuildNotifierCommand_UsesDirectBinaryForLegacy(t *testing.T) {
 	}
 }
 
+func TestRunClaudeNotifierApp_PermissionDeniedError(t *testing.T) {
+	restorePath := installFakeOpen(t, fmt.Sprintf("Error: %s", macOSPermissionDeniedMessage), 0)
+	defer restorePath()
+
+	err := runClaudeNotifierApp("/tmp/ClaudeNotifier.app", []string{"-title", "Test"})
+	if err == nil {
+		t.Fatal("expected permission denied error, got nil")
+	}
+
+	var permissionErr *NotificationPermissionDeniedError
+	if !errors.As(err, &permissionErr) {
+		t.Fatalf("expected NotificationPermissionDeniedError, got %T: %v", err, err)
+	}
+}
+
+func TestRunClaudeNotifierApp_ReportsGenericStderr(t *testing.T) {
+	restorePath := installFakeOpen(t, "Error: unexpected notifier failure", 0)
+	defer restorePath()
+
+	err := runClaudeNotifierApp("/tmp/ClaudeNotifier.app", []string{"-title", "Test"})
+	if err == nil {
+		t.Fatal("expected generic notifier error, got nil")
+	}
+	if strings.Contains(err.Error(), macOSPermissionDeniedMessage) {
+		t.Fatalf("did not expect permission denied classification, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "ClaudeNotifier reported an error") {
+		t.Fatalf("expected generic stderr error, got %v", err)
+	}
+}
+
 // === Helper functions ===
+
+func installFakeOpen(t *testing.T, stderrMessage string, exitCode int) func() {
+	t.Helper()
+
+	tempDir := t.TempDir()
+	scriptPath := filepath.Join(tempDir, "open")
+	script := fmt.Sprintf(`#!/bin/sh
+stderr_path=""
+stdout_path=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o)
+      stdout_path="$2"
+      shift 2
+      ;;
+    --stderr)
+      stderr_path="$2"
+      shift 2
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+
+if [ -n "$stdout_path" ]; then
+  : > "$stdout_path"
+fi
+if [ -n "$stderr_path" ]; then
+  printf '%%s' %q > "$stderr_path"
+fi
+exit %d
+`, stderrMessage, exitCode)
+	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("failed to write fake open script: %v", err)
+	}
+
+	originalPath := os.Getenv("PATH")
+	if err := os.Setenv("PATH", tempDir+string(os.PathListSeparator)+originalPath); err != nil {
+		t.Fatalf("failed to update PATH: %v", err)
+	}
+
+	return func() {
+		_ = os.Setenv("PATH", originalPath)
+	}
+}
 
 func containsArg(args []string, flag, value string) bool {
 	for i := 0; i < len(args)-1; i++ {

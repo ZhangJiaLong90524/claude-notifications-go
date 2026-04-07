@@ -2,6 +2,7 @@ package hooks
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -545,6 +546,7 @@ func (h *Handler) sendNotifications(status analyzer.Status, message, sessionID, 
 	// Send desktop notification (check per-status enabled)
 	if h.cfg.IsStatusDesktopEnabled(statusStr) {
 		if err := h.notifierSvc.SendDesktop(status, enhancedMessage, sessionID, cwd); err != nil {
+			h.maybeEmitDesktopPermissionGuidance(err)
 			errorhandler.HandleError(err, "Failed to send desktop notification")
 		}
 	} else {
@@ -578,4 +580,47 @@ func (h *Handler) cleanupOldLocks() {
 	if err := h.stateMgr.Cleanup(60); err != nil {
 		logging.Warn("Failed to cleanup old state files: %v", err)
 	}
+}
+
+func (h *Handler) maybeEmitDesktopPermissionGuidance(err error) {
+	if !platform.IsMacOS() {
+		return
+	}
+
+	var permissionErr *notifier.NotificationPermissionDeniedError
+	if !errors.As(err, &permissionErr) {
+		return
+	}
+
+	if !h.shouldEmitPermissionGuidance() {
+		return
+	}
+
+	message := "[claude-notifications] macOS is blocking ClaudeNotifier notifications. Open System Settings > Notifications > Claude Notifier and enable notifications. This can happen after older ad-hoc installs or stale notification permissions."
+	fmt.Printf("{\"systemMessage\":%q}\n", message)
+}
+
+func (h *Handler) shouldEmitPermissionGuidance() bool {
+	cacheDir, err := os.UserCacheDir()
+	if err != nil || cacheDir == "" {
+		return true
+	}
+
+	stampDir := filepath.Join(cacheDir, "claude-notifications-go")
+	stampPath := filepath.Join(stampDir, "macos-notification-permission-reminder")
+
+	if info, err := os.Stat(stampPath); err == nil {
+		if time.Since(info.ModTime()) < 24*time.Hour {
+			return false
+		}
+	}
+
+	if err := os.MkdirAll(stampDir, 0o755); err != nil {
+		return true
+	}
+	if err := os.WriteFile(stampPath, []byte(time.Now().Format(time.RFC3339)), 0o644); err != nil {
+		return true
+	}
+
+	return true
 }
