@@ -24,6 +24,15 @@ def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--pane", help="tmux pane ID, for example %%42")
     parser.add_argument(
+        "--termid",
+        help="exact iTerm2 session termid (matches $ITERM_SESSION_ID)",
+    )
+    parser.add_argument(
+        "--cwd",
+        default="",
+        help="fallback working directory for unique-session matching",
+    )
+    parser.add_argument(
         "--tmux-path",
         default="tmux",
         help="absolute path to tmux binary",
@@ -39,8 +48,8 @@ def parse_args():
         help="list iTerm2 tabs with tmuxWindowPane and tty variables",
     )
     args = parser.parse_args()
-    if not args.list and not args.pane:
-        parser.error("--pane is required unless --list is used")
+    if not args.list and not args.pane and not args.termid and not args.cwd:
+        parser.error("--pane, --termid, or --cwd is required unless --list is used")
     return args
 
 
@@ -154,6 +163,41 @@ async def select_tab(connection, target_pane, tmux_path, socket_path):
     return False
 
 
+async def select_session(connection, target_termid, target_cwd):
+    """Find and activate an iTerm2 session directly.
+
+    Strategy:
+    1. Exact termid match (ITERM_SESSION_ID) for precise tab/pane targeting
+    2. Unique cwd match as a safe fallback
+    """
+    app = await iterm2.async_get_app(connection)
+    cwd_matches = []
+
+    for window in app.windows:
+        for tab in window.tabs:
+            for session in tab.sessions:
+                termid = await session.async_get_variable("termid")
+                if target_termid and termid == target_termid:
+                    await session.async_activate()
+                    return True
+
+                path = await session.async_get_variable("path")
+                if target_cwd and path == target_cwd:
+                    cwd_matches.append(session)
+
+    if not target_cwd:
+        return False
+
+    if len(cwd_matches) == 1:
+        await cwd_matches[0].async_activate()
+        return True
+
+    if len(cwd_matches) > 1:
+        raise RuntimeError(f"multiple iTerm2 sessions match cwd {target_cwd}")
+
+    return False
+
+
 async def list_tabs(connection):
     """List all iTerm2 tabs with their tmuxWindowPane and tty mappings."""
     app = await iterm2.async_get_app(connection)
@@ -163,7 +207,9 @@ async def list_tabs(connection):
             for session in tab.sessions:
                 wp = await session.async_get_variable("tmuxWindowPane")
                 tty = await session.async_get_variable("tty")
-                print(f"  Tab {i}: tmuxWindowPane={wp} tty={tty}")
+                termid = await session.async_get_variable("termid")
+                path = await session.async_get_variable("path")
+                print(f"  Tab {i}: tmuxWindowPane={wp} tty={tty} termid={termid} path={path}")
 
 
 async def main(connection):
@@ -173,8 +219,15 @@ async def main(connection):
         await list_tabs(connection)
         return
 
-    if not await select_tab(connection, args.pane, args.tmux_path, args.socket):
-        print(f"No tab found for tmux pane {args.pane}", file=sys.stderr)
+    if args.pane:
+        if not await select_tab(connection, args.pane, args.tmux_path, args.socket):
+            print(f"No tab found for tmux pane {args.pane}", file=sys.stderr)
+            sys.exit(1)
+        return
+
+    if not await select_session(connection, args.termid, args.cwd):
+        detail = args.termid or args.cwd
+        print(f"No iTerm2 session found for {detail}", file=sys.stderr)
         sys.exit(1)
 
 
