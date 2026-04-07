@@ -40,8 +40,8 @@ const (
 // buildIterm2FocusScript prefers iTerm2's exact session reveal URL when the
 // current shell exported ITERM_SESSION_ID. This targets the precise tab/pane
 // via the iTerm2 Python API helper. If the helper is unavailable or the exact
-// session can no longer be resolved, it falls back to the generic focus-window
-// path when cwd is available.
+// session can no longer be resolved, it falls back to app-level activation
+// instead of focus-window to avoid confusing Screen Recording prompts on iTerm2.
 func buildIterm2FocusScript(cwd string) string {
 	sessionID := os.Getenv(iTerm2SessionIDEnv)
 	pythonPath, scriptPath, ok := getiTerm2PythonEnv()
@@ -58,24 +58,14 @@ func buildIterm2FocusScript(cwd string) string {
 			helperCmd += " --cwd " + shellQuote(cwd)
 		}
 
-		if !isUsableFocusCWD(cwd) {
-			return helperCmd
-		}
-
-		fallbackCmd := buildBinaryFocusScript(iTerm2BundleID, cwd)
-		if fallbackCmd == "" {
-			return helperCmd
-		}
-
-		// If the exact session helper fails, preserve the previous window-level
-		// fallback instead of leaving the click action as a no-op.
-		return fmt.Sprintf("%s >/dev/null 2>&1 || %s", helperCmd, fallbackCmd)
+		// If the exact helper fails at click time, keep the fallback at simple
+		// app activation instead of switching to focus-window, which would ask
+		// for Screen Recording even though the underlying iTerm2 issue is the
+		// Python API helper.
+		return fmt.Sprintf("%s >/dev/null 2>&1 || open -a iTerm", helperCmd)
 	}
 
-	if !isUsableFocusCWD(cwd) {
-		return ""
-	}
-	return buildBinaryFocusScript(iTerm2BundleID, cwd)
+	return ""
 }
 
 func checkIterm2PythonAPIHealth(pythonPath, scriptPath string) iTerm2HelperHealth {
