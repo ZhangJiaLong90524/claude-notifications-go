@@ -153,8 +153,11 @@ async def select_tab(connection, target_pane, tmux_path, socket_path):
             for session in tab.sessions:
                 wp = await session.async_get_variable("tmuxWindowPane")
                 if wp is not None and str(wp) == pane_number:
-                    await window.async_activate()
-                    await tab.async_select()
+                    await app.async_activate(
+                        raise_all_windows=False,
+                        ignoring_other_apps=True,
+                    )
+                    await tab.async_activate(order_window_front=True)
                     return True
                 tty = await session.async_get_variable("tty")
                 if tty:
@@ -165,8 +168,11 @@ async def select_tab(connection, target_pane, tmux_path, socket_path):
     for window, tab, tab_ttys in tabs:
         for client_tty in client_ttys:
             if client_tty in tab_ttys:
-                await window.async_activate()
-                await tab.async_select()
+                await app.async_activate(
+                    raise_all_windows=False,
+                    ignoring_other_apps=True,
+                )
+                await tab.async_activate(order_window_front=True)
                 focus_tmux_client(tmux_path, socket_path, pane_target, client_tty)
                 return True
     return False
@@ -187,7 +193,14 @@ async def select_session(connection, target_termid, target_cwd):
             for session in tab.sessions:
                 termid = await session.async_get_variable("termid")
                 if target_termid and termid == target_termid:
-                    await session.async_activate()
+                    await app.async_activate(
+                        raise_all_windows=False,
+                        ignoring_other_apps=True,
+                    )
+                    await session.async_activate(
+                        select_tab=True,
+                        order_window_front=True,
+                    )
                     return True
 
                 path = await session.async_get_variable("path")
@@ -198,7 +211,14 @@ async def select_session(connection, target_termid, target_cwd):
         return False
 
     if len(cwd_matches) == 1:
-        await cwd_matches[0].async_activate()
+        await app.async_activate(
+            raise_all_windows=False,
+            ignoring_other_apps=True,
+        )
+        await cwd_matches[0].async_activate(
+            select_tab=True,
+            order_window_front=True,
+        )
         return True
 
     if len(cwd_matches) > 1:
