@@ -1354,6 +1354,56 @@ func TestBuildFocusScript_Iterm2WithoutHelperFallsBackToFocusWindow(t *testing.T
 	}
 }
 
+func TestBuildFocusScript_Iterm2DisabledAPIFallsBackAndPromptsOnce(t *testing.T) {
+	setupFakeiTerm2Env(t)
+	t.Setenv(iTerm2SessionIDEnv, "w0t0p9:disabled")
+
+	restoreExecCommand := installFakeOpen(t, "", iTerm2HealthcheckExitDisabled)
+	defer restoreExecCommand()
+
+	originalSendQuickNotification := sendQuickNotification
+	defer func() {
+		sendQuickNotification = originalSendQuickNotification
+	}()
+
+	promptCount := 0
+	sendQuickNotification = func(title, message, executeCmd string) error {
+		promptCount++
+		return nil
+	}
+
+	script := buildFocusScript("com.googlecode.iterm2", "/home/user/my-project")
+	if !strings.Contains(script, "focus-window") {
+		t.Fatalf("disabled iTerm2 API should fall back to focus-window, got: %s", script)
+	}
+	if strings.Contains(script, "iterm2-select-tab.py") {
+		t.Fatalf("disabled iTerm2 API should not keep helper in execute script, got: %s", script)
+	}
+	if promptCount != 1 {
+		t.Fatalf("expected one prompt on first disabled-api detection, got %d", promptCount)
+	}
+
+	script = buildFocusScript("com.googlecode.iterm2", "/home/user/my-project")
+	if !strings.Contains(script, "focus-window") {
+		t.Fatalf("disabled iTerm2 API should still fall back to focus-window, got: %s", script)
+	}
+	if promptCount != 1 {
+		t.Fatalf("disabled-api prompt should be throttled, got %d prompts", promptCount)
+	}
+}
+
+func TestBuildTmuxCCNotifierArgs_DisabledAPIErrors(t *testing.T) {
+	setupFakeiTerm2Env(t)
+
+	restoreExecCommand := installFakeOpen(t, "", iTerm2HealthcheckExitDisabled)
+	defer restoreExecCommand()
+
+	_, err := buildTmuxCCNotifierArgs("Title", "Msg", "%42", iTerm2BundleID)
+	if err == nil {
+		t.Fatal("expected error when iTerm2 Python API is disabled")
+	}
+}
+
 func TestBuildTerminalNotifierArgs_WithCWD_UsesExecute(t *testing.T) {
 	args := buildTerminalNotifierArgs("Title", "Message", "com.microsoft.VSCode", "/home/user/proj", true)
 	if containsArg(args, "-activate", "com.microsoft.VSCode") {

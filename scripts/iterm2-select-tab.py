@@ -13,11 +13,15 @@ import argparse
 import subprocess
 import sys
 
+EXIT_PYTHON_API_DISABLED = 11
+EXIT_MODULE_MISSING = 12
+EXIT_OTHER = 13
+
 try:
     import iterm2
 except ImportError:
     print("iterm2 module not installed. Run: pip install iterm2", file=sys.stderr)
-    sys.exit(1)
+    sys.exit(EXIT_MODULE_MISSING)
 
 
 def parse_args():
@@ -47,8 +51,13 @@ def parse_args():
         action="store_true",
         help="list iTerm2 tabs with tmuxWindowPane and tty variables",
     )
+    parser.add_argument(
+        "--healthcheck",
+        action="store_true",
+        help="check that the iTerm2 Python API is reachable",
+    )
     args = parser.parse_args()
-    if not args.list and not args.pane and not args.termid and not args.cwd:
+    if not args.list and not args.healthcheck and not args.pane and not args.termid and not args.cwd:
         parser.error("--pane, --termid, or --cwd is required unless --list is used")
     return args
 
@@ -215,6 +224,10 @@ async def list_tabs(connection):
 async def main(connection):
     args = parse_args()
 
+    if args.healthcheck:
+        await iterm2.async_get_app(connection)
+        return
+
     if args.list:
         await list_tabs(connection)
         return
@@ -241,4 +254,7 @@ if __name__ == "__main__":
             "iTerm2 > Settings > General > Magic",
             file=sys.stderr,
         )
-        sys.exit(1)
+        message = str(e)
+        if "not enabled" in message.lower() or "problem connecting to iterm2" in message.lower():
+            sys.exit(EXIT_PYTHON_API_DISABLED)
+        sys.exit(EXIT_OTHER)

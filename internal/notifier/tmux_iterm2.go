@@ -49,6 +49,9 @@ func buildIterm2TmuxNotifierArgs(title, message, paneTarget, bundleID string) ([
 	if !ok {
 		return nil, fmt.Errorf("iterm2 venv or helper script not found")
 	}
+	if checkIterm2PythonAPIHealth(pythonPath, scriptPath) != iTerm2HelperReady {
+		return nil, fmt.Errorf("iterm2 python api unavailable")
+	}
 
 	tmuxPath := getTmuxPath()
 	socketPath := getTmuxSocketPath()
