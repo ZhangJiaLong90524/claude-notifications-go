@@ -840,6 +840,9 @@ func TestHelperProcess(t *testing.T) {
 	if stderrPath != "" {
 		_ = os.WriteFile(stderrPath, []byte(os.Getenv("GO_HELPER_STDERR")), 0o644)
 	}
+	if stderrText := os.Getenv("GO_HELPER_STDERR"); stderrText != "" {
+		_, _ = os.Stderr.WriteString(stderrText)
+	}
 
 	exitCode, err := strconv.Atoi(os.Getenv("GO_HELPER_EXIT_CODE"))
 	if err != nil {
@@ -1357,6 +1360,7 @@ func TestBuildFocusScript_Iterm2WithoutHelperFallsBackToFocusWindow(t *testing.T
 }
 
 func TestBuildFocusScript_Iterm2DisabledAPIFallsBackAndPromptsOnce(t *testing.T) {
+	withIsolatedEnv(t)
 	setupFakeiTerm2Env(t)
 	t.Setenv(iTerm2SessionIDEnv, "w0t0p9:disabled")
 
@@ -1391,6 +1395,48 @@ func TestBuildFocusScript_Iterm2DisabledAPIFallsBackAndPromptsOnce(t *testing.T)
 	}
 	if promptCount != 1 {
 		t.Fatalf("disabled-api prompt should be throttled, got %d prompts", promptCount)
+	}
+}
+
+func TestBuildFocusScript_Iterm2HealthcheckConnectFailurePromptsOnce(t *testing.T) {
+	withIsolatedEnv(t)
+	setupFakeiTerm2Env(t)
+	t.Setenv(iTerm2SessionIDEnv, "w0t0p9:connect-failure")
+
+	restoreExecCommand := installFakeOpen(t, "There was a problem connecting to iTerm2.\nIf you have downgraded from iTerm2 3.3.12+ to an older version, you must manually delete the file at /Users/test/Library/Application Support/iTerm2/private/socket.", iTerm2HealthcheckExitOther)
+	defer restoreExecCommand()
+
+	originalSendQuickNotification := sendQuickNotification
+	defer func() {
+		sendQuickNotification = originalSendQuickNotification
+	}()
+
+	promptCount := 0
+	sendQuickNotification = func(title, message, executeCmd string) error {
+		promptCount++
+		if !strings.Contains(message, "Settings > General > Magic > Enable Python API") {
+			t.Fatalf("prompt should mention exact iTerm2 settings path, got: %s", message)
+		}
+		return nil
+	}
+
+	script := buildFocusScript("com.googlecode.iterm2", "/home/user/my-project")
+	if !strings.Contains(script, "focus-window") {
+		t.Fatalf("connect failure should fall back to focus-window, got: %s", script)
+	}
+	if strings.Contains(script, "iterm2-select-tab.py") {
+		t.Fatalf("connect failure should not keep helper in execute script, got: %s", script)
+	}
+	if promptCount != 1 {
+		t.Fatalf("expected one prompt on first connect failure, got %d", promptCount)
+	}
+
+	script = buildFocusScript("com.googlecode.iterm2", "/home/user/my-project")
+	if !strings.Contains(script, "focus-window") {
+		t.Fatalf("connect failure should still fall back to focus-window, got: %s", script)
+	}
+	if promptCount != 1 {
+		t.Fatalf("connect-failure prompt should be throttled, got %d prompts", promptCount)
 	}
 }
 

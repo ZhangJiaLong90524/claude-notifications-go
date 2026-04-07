@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/777genius/claude-notifications/internal/config"
@@ -84,6 +85,7 @@ func checkIterm2PythonAPIHealth(pythonPath, scriptPath string) iTerm2HelperHealt
 
 	cmd := execCommand(pythonPath, scriptPath, iTerm2HealthcheckFlag)
 	output, err := cmd.CombinedOutput()
+	outputText := stringsTrimSpace(string(output))
 	if err == nil {
 		touchMarker(iTerm2HealthcheckSuccessMarkerPath())
 		return iTerm2HelperReady
@@ -93,23 +95,39 @@ func checkIterm2PythonAPIHealth(pythonPath, scriptPath string) iTerm2HelperHealt
 
 	var exitErr interface{ ExitCode() int }
 	if errors.As(err, &exitErr) && exitErr.ExitCode() == iTerm2HealthcheckExitDisabled {
-		logging.Warn("iTerm2 Python API is disabled: %s", stringsTrimSpace(string(output)))
+		logging.Warn("iTerm2 Python API is disabled: %s", outputText)
 		promptIterm2PythonAPIDisabled()
 		return iTerm2HelperDisabled
 	}
 
 	if errors.As(err, &exitErr) && exitErr.ExitCode() == iTerm2HealthcheckExitModuleMiss {
-		logging.Warn("iTerm2 Python helper module missing: %s", stringsTrimSpace(string(output)))
+		logging.Warn("iTerm2 Python helper module missing: %s", outputText)
 		return iTerm2HelperUnavailable
 	}
 
 	if errors.As(err, &exitErr) && exitErr.ExitCode() == iTerm2HealthcheckExitOther {
-		logging.Warn("iTerm2 Python helper healthcheck failed: %s", stringsTrimSpace(string(output)))
+		logging.Warn("iTerm2 Python helper healthcheck failed: %s", outputText)
+		if shouldPromptIterm2PythonAPI(outputText) {
+			promptIterm2PythonAPIDisabled()
+		}
 		return iTerm2HelperUnavailable
 	}
 
-	logging.Warn("iTerm2 Python helper healthcheck failed: %v output=%s", err, stringsTrimSpace(string(output)))
+	logging.Warn("iTerm2 Python helper healthcheck failed: %v output=%s", err, outputText)
+	if shouldPromptIterm2PythonAPI(outputText) {
+		promptIterm2PythonAPIDisabled()
+	}
 	return iTerm2HelperUnavailable
+}
+
+func shouldPromptIterm2PythonAPI(output string) bool {
+	if output == "" {
+		return false
+	}
+
+	return strings.Contains(output, "problem connecting to iTerm2") ||
+		strings.Contains(output, "Ensure the Python API is enabled") ||
+		strings.Contains(output, "private/socket")
 }
 
 func isUsableFocusCWD(cwd string) bool {
@@ -165,7 +183,7 @@ func promptIterm2PythonAPIDisabled() {
 	touchMarker(markerPath)
 	_ = sendQuickNotification(
 		"iTerm2 Python API Disabled",
-		"Enable it in iTerm2 > Settings > General > Magic to make notification clicks open the exact tab or pane.",
+		"Enable iTerm2 > Settings > General > Magic > Enable Python API. If you just toggled it, restart iTerm2 so clicks can open the exact tab or pane again.",
 		`open -a iTerm`,
 	)
 }

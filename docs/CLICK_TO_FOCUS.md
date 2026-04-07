@@ -30,7 +30,8 @@ Auto-detects your terminal via `TERM_PROGRAM` / `__CFBundleIdentifier`. Uses `te
 |----------|-------------|
 | Ghostty | AXDocument (OSC 7 CWD) with retry backoff |
 | VS Code / Insiders / Cursor | AXTitle via focus-window subcommand |
-| iTerm2, Warp, kitty, WezTerm, Alacritty, Hyper, Apple Terminal | AXTitle via focus-window subcommand |
+| iTerm2 | Exact tab/pane targeting via iTerm2 Python API when available, otherwise AXTitle via focus-window fallback |
+| Warp, kitty, WezTerm, Alacritty, Hyper, Apple Terminal | AXTitle via focus-window subcommand |
 | Any other (custom `terminalBundleId`) | AXTitle via focus-window subcommand |
 
 To find your terminal's bundle ID: `osascript -e 'id of app "YourTerminal"'`
@@ -113,7 +114,7 @@ echo "$CLAUDE_PLUGIN_ROOT"
   "$CLAUDE_PLUGIN_ROOT/scripts/iterm2-select-tab.py" --list
 ```
 
-If the Python API is not available, the plugin falls back to standard `tmux select-window` (which may not switch iTerm2 tabs in -CC mode).
+If the Python API is not available, the plugin falls back to standard `tmux select-window` (which may not switch iTerm2 tabs in -CC mode). If you just toggled the setting, restart iTerm2 once. If click-to-focus falls back to window-level matching instead of exact tab targeting, macOS may ask for Screen Recording permission.
 
 ## Windows
 
