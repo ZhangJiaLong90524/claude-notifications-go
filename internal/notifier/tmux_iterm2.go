@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 )
 
@@ -35,19 +34,30 @@ func getiTerm2PythonEnv() (pythonPath string, scriptPath string, ok bool) {
 	return pythonPath, scriptPath, true
 }
 
-// buildTmuxCCNotifierArgs constructs terminal-notifier arguments for
-// tmux control mode (-CC). Instead of tmux select-window (which doesn't
-// switch iTerm2 tabs in -CC mode), calls a Python helper that uses the
-// iTerm2 Python API with tmuxWindowPane session variable mapping.
-func buildTmuxCCNotifierArgs(title, message, paneTarget, bundleID string) ([]string, error) {
+const iTerm2BundleID = "com.googlecode.iterm2"
+
+func isIterm2BundleID(bundleID string) bool {
+	return bundleID == iTerm2BundleID
+}
+
+// buildIterm2TmuxNotifierArgs constructs terminal-notifier arguments for
+// iTerm2 + tmux. The Python helper handles both tmux -CC (via tmuxWindowPane)
+// and plain tmux (via tmux client tty fallback) to avoid mutating the wrong
+// tmux client in multi-tab setups.
+func buildIterm2TmuxNotifierArgs(title, message, paneTarget, bundleID string) ([]string, error) {
 	pythonPath, scriptPath, ok := getiTerm2PythonEnv()
 	if !ok {
 		return nil, fmt.Errorf("iterm2 venv or helper script not found")
 	}
 
-	// paneTarget = "%42", Python script expects "42" (without %)
-	paneNum := strings.TrimPrefix(paneTarget, "%")
-	executeCmd := fmt.Sprintf("'%s' '%s' '%s'", pythonPath, scriptPath, paneNum)
+	tmuxPath := getTmuxPath()
+	socketPath := getTmuxSocketPath()
+
+	executeCmd := fmt.Sprintf("'%s' '%s' --pane '%s' --tmux-path '%s'",
+		pythonPath, scriptPath, paneTarget, tmuxPath)
+	if socketPath != "" {
+		executeCmd = fmt.Sprintf("%s --socket '%s'", executeCmd, socketPath)
+	}
 
 	args := []string{
 		"-title", title,
@@ -57,4 +67,10 @@ func buildTmuxCCNotifierArgs(title, message, paneTarget, bundleID string) ([]str
 		"-group", fmt.Sprintf("claude-notif-%d", time.Now().UnixNano()),
 	}
 	return args, nil
+}
+
+// buildTmuxCCNotifierArgs is kept as a compatibility wrapper for the existing
+// tmux -CC tests; the helper now supports both control mode and plain tmux.
+func buildTmuxCCNotifierArgs(title, message, paneTarget, bundleID string) ([]string, error) {
+	return buildIterm2TmuxNotifierArgs(title, message, paneTarget, bundleID)
 }

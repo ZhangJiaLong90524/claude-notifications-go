@@ -1,6 +1,8 @@
 package notifier
 
 import (
+	"fmt"
+
 	"github.com/777genius/claude-notifications/internal/logging"
 )
 
@@ -46,6 +48,20 @@ func buildTmuxClickArgs(title, message, bundleID string) ([]string, error) {
 	target, err := GetTmuxPaneTarget()
 	if err != nil {
 		return nil, err
+	}
+
+	if isIterm2BundleID(bundleID) {
+		args, err := buildIterm2TmuxNotifierArgs(title, message, target, bundleID)
+		if err == nil {
+			logging.Debug("iTerm2 + tmux: using Python API helper for tab switching")
+			return args, nil
+		}
+		if IsTmuxControlMode() {
+			logging.Warn("tmux -CC mode detected but iTerm2 Python API unavailable: %v. "+
+				"Tab switch may not work. Run bootstrap.sh to set up.", err)
+		} else {
+			return nil, fmt.Errorf("iTerm2 tmux helper unavailable in plain tmux mode: %w", err)
+		}
 	}
 
 	if IsTmuxControlMode() {

@@ -115,11 +115,8 @@ func TestBuildTmuxCCNotifierArgs_StripsPanePrefix(t *testing.T) {
 	}
 
 	executeCmd := getArgValue(args, "-execute")
-	if strings.Contains(executeCmd, "%42") {
-		t.Errorf("-execute should strip %% prefix, got: %s", executeCmd)
-	}
-	if !strings.Contains(executeCmd, "'42'") {
-		t.Errorf("-execute should contain '42', got: %s", executeCmd)
+	if !strings.Contains(executeCmd, "--pane '%42'") {
+		t.Errorf("-execute should contain pane flag with %%42, got: %s", executeCmd)
 	}
 }
 
@@ -137,6 +134,9 @@ func TestBuildTmuxCCNotifierArgs_ContainsActivate(t *testing.T) {
 	executeCmd := getArgValue(args, "-execute")
 	if !strings.Contains(executeCmd, "iterm2-select-tab.py") {
 		t.Errorf("-execute should reference iterm2-select-tab.py, got: %s", executeCmd)
+	}
+	if !strings.Contains(executeCmd, "--tmux-path") {
+		t.Errorf("-execute should pass --tmux-path, got: %s", executeCmd)
 	}
 }
 
@@ -166,8 +166,8 @@ func TestBuildTmuxCCNotifierArgs_PaneWithoutPercent(t *testing.T) {
 	}
 
 	executeCmd := getArgValue(args, "-execute")
-	if !strings.Contains(executeCmd, "'42'") {
-		t.Errorf("-execute should contain '42', got: %s", executeCmd)
+	if !strings.Contains(executeCmd, "--pane '42'") {
+		t.Errorf("-execute should contain pane flag with 42, got: %s", executeCmd)
 	}
 }
 
@@ -183,6 +183,120 @@ func TestBuildTmuxCCNotifierArgs_EmptyPaneTarget(t *testing.T) {
 	executeCmd := getArgValue(args, "-execute")
 	if executeCmd == "" {
 		t.Error("-execute should not be empty")
+	}
+}
+
+func TestBuildTmuxClickArgs_Iterm2PlainTmuxUsesHelper(t *testing.T) {
+	setupFakeiTerm2Env(t)
+
+	oldTmux := os.Getenv("TMUX")
+	oldPane := os.Getenv("TMUX_PANE")
+	os.Setenv("TMUX", "/tmp/tmux.sock,123,0")
+	os.Setenv("TMUX_PANE", "%42")
+	t.Cleanup(func() {
+		if oldTmux != "" {
+			os.Setenv("TMUX", oldTmux)
+		} else {
+			os.Unsetenv("TMUX")
+		}
+		if oldPane != "" {
+			os.Setenv("TMUX_PANE", oldPane)
+		} else {
+			os.Unsetenv("TMUX_PANE")
+		}
+	})
+
+	args, err := buildTmuxClickArgs("Title", "Msg", iTerm2BundleID)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	executeCmd := getArgValue(args, "-execute")
+	if !strings.Contains(executeCmd, "iterm2-select-tab.py") {
+		t.Fatalf("expected iTerm2 helper in execute command, got: %s", executeCmd)
+	}
+	if strings.Contains(executeCmd, "select-window") {
+		t.Errorf("plain tmux iTerm2 path should not inline select-window in Go, got: %s", executeCmd)
+	}
+}
+
+func TestBuildTmuxClickArgs_Iterm2PlainTmuxWithoutHelperErrors(t *testing.T) {
+	withIsolatedEnv(t)
+
+	oldTmux := os.Getenv("TMUX")
+	oldPane := os.Getenv("TMUX_PANE")
+	os.Setenv("TMUX", "/tmp/tmux.sock,123,0")
+	os.Setenv("TMUX_PANE", "%42")
+	t.Cleanup(func() {
+		if oldTmux != "" {
+			os.Setenv("TMUX", oldTmux)
+		} else {
+			os.Unsetenv("TMUX")
+		}
+		if oldPane != "" {
+			os.Setenv("TMUX_PANE", oldPane)
+		} else {
+			os.Unsetenv("TMUX_PANE")
+		}
+	})
+
+	_, err := buildTmuxClickArgs("Title", "Msg", iTerm2BundleID)
+	if err == nil {
+		t.Fatal("expected error when iTerm2 helper is unavailable in plain tmux")
+	}
+	if !strings.Contains(err.Error(), "plain tmux mode") {
+		t.Fatalf("expected plain tmux error, got: %v", err)
+	}
+}
+
+func TestBuildTmuxClickArgs_Iterm2ControlModeFallsBackWithoutHelper(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("iTerm2 tmux control mode fallback is macOS-specific")
+	}
+
+	withIsolatedEnv(t)
+
+	tmpDir := t.TempDir()
+	fakeTmux := filepath.Join(tmpDir, "tmux")
+	fakeScript := "#!/bin/sh\n" +
+		"if [ \"$1\" = \"-S\" ]; then shift 2; fi\n" +
+		"if [ \"$1\" = \"list-clients\" ]; then\n" +
+		"  printf '1\\n'\n" +
+		"  exit 0\n" +
+		"fi\n" +
+		"exit 1\n"
+	if err := os.WriteFile(fakeTmux, []byte(fakeScript), 0o755); err != nil {
+		t.Fatalf("failed to write fake tmux: %v", err)
+	}
+
+	oldPath := os.Getenv("PATH")
+	oldTmux := os.Getenv("TMUX")
+	oldPane := os.Getenv("TMUX_PANE")
+	os.Setenv("PATH", tmpDir+string(os.PathListSeparator)+oldPath)
+	os.Setenv("TMUX", "/tmp/tmux.sock,123,0")
+	os.Setenv("TMUX_PANE", "%42")
+	t.Cleanup(func() {
+		os.Setenv("PATH", oldPath)
+		if oldTmux != "" {
+			os.Setenv("TMUX", oldTmux)
+		} else {
+			os.Unsetenv("TMUX")
+		}
+		if oldPane != "" {
+			os.Setenv("TMUX_PANE", oldPane)
+		} else {
+			os.Unsetenv("TMUX_PANE")
+		}
+	})
+
+	args, err := buildTmuxClickArgs("Title", "Msg", iTerm2BundleID)
+	if err != nil {
+		t.Fatalf("expected fallback args, got error: %v", err)
+	}
+
+	executeCmd := getArgValue(args, "-execute")
+	if !strings.Contains(executeCmd, "select-window") {
+		t.Fatalf("expected standard tmux fallback in control mode, got: %s", executeCmd)
 	}
 }
 
