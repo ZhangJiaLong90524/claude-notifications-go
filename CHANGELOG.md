@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.36.6] - 2026-04-07
+
+### Fixed
+- **iTerm2: degraded click-to-focus no longer drops into misleading Screen Recording prompts** — when the iTerm2 Python API helper is unavailable, notification clicks now fall back to plain iTerm activation instead of the generic window-title matcher, which keeps the degraded path predictable and avoids prompting for the wrong permission
+- **iTerm2: clearer setup guidance in both bootstrap and runtime prompts** — bootstrap now visibly points iTerm2 users to `Settings → General → Magic → Python API`, and the runtime one-time warning also covers the common “helper cannot reconnect after toggling Python API” case
+
 ## [1.36.5] - 2026-04-07
 
 ### Fixed
