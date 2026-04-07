@@ -82,6 +82,35 @@ detect_platform() {
 
 # ──────────────────────────────────────────────
 
+is_iterm2_detected() {
+    [ "$(uname -s)" = "Darwin" ] || return 1
+
+    [ "${TERM_PROGRAM:-}" = "iTerm.app" ] && return 0
+    [ "${__CFBundleIdentifier:-}" = "com.googlecode.iterm2" ] && return 0
+    [ -d "/Applications/iTerm.app" ] && return 0
+    [ -d "$HOME/Applications/iTerm.app" ] && return 0
+
+    return 1
+}
+
+# ──────────────────────────────────────────────
+
+print_iterm2_python_api_notice() {
+    is_iterm2_detected || return 0
+
+    echo ""
+    echo -e "${YELLOW}────────────────────────────────────────────${NC}"
+    echo -e "${YELLOW}⚠${NC} ${BOLD}iTerm2 detected${NC}"
+    echo -e "  To open the ${BOLD}exact iTerm2 tab / split pane${NC} on notification click:"
+    echo -e "  1. Open ${BOLD}iTerm2${NC}"
+    echo -e "  2. Go to ${BOLD}Settings → General → Magic${NC}"
+    echo -e "  3. Enable ${BOLD}Python API${NC}"
+    echo -e "  4. If you just toggled it, ${BOLD}restart iTerm2 once${NC}"
+    echo -e "${YELLOW}────────────────────────────────────────────${NC}"
+}
+
+# ──────────────────────────────────────────────
+
 setup_marketplace() {
     echo ""
     echo -e "${BLUE}📦 Setting up marketplace...${NC}"
@@ -751,15 +780,7 @@ setup_iterm2_venv() {
     # Only relevant on macOS
     [ "$(uname -s)" = "Darwin" ] || return 0
 
-    # Check if user has iTerm2 (current terminal or installed)
-    local is_iterm=false
-    [ "${TERM_PROGRAM:-}" = "iTerm.app" ] && is_iterm=true
-    [ "${__CFBundleIdentifier:-}" = "com.googlecode.iterm2" ] && is_iterm=true
-    [ "$is_iterm" = false ] && [ -d "/Applications/iTerm.app" ] && is_iterm=true
-    [ "$is_iterm" = true ] || return 0
-
-    # tmux must be installed
-    command -v tmux &>/dev/null || return 0
+    is_iterm2_detected || return 0
 
     # Use $HOME/.claude explicitly (not $CLAUDE_HOME) — the Go code resolves
     # the venv path via os.UserHomeDir()/.claude/..., so the venv must be there.
@@ -784,7 +805,7 @@ setup_iterm2_venv() {
     fi
 
     echo ""
-    echo -e "${BLUE}  Setting up iTerm2 tmux -CC support...${NC}"
+    echo -e "${BLUE}  Setting up iTerm2 Python API support...${NC}"
 
     if ! "$python3_path" -m venv "$VENV_DIR" 2>/dev/null; then
         echo -e "${YELLOW}  ⚠ Could not create Python venv, skipping${NC}"
@@ -811,6 +832,11 @@ print_success() {
     echo -e "${BOLD}Next steps:${NC}"
     echo -e "  1. ${YELLOW}Restart Claude Code${NC} (exit and reopen)"
     echo -e "  2. Run ${BOLD}/claude-notifications-go:settings${NC} to configure sounds"
+    if is_iterm2_detected; then
+        echo -e "  3. In ${BOLD}iTerm2${NC}, enable ${BOLD}Settings → General → Magic → Python API${NC}"
+    fi
+    echo ""
+    print_iterm2_python_api_notice
     echo ""
     echo -e "${BLUE}One-liner to update in the future (same as install):${NC}"
     echo -e "  curl -fsSL https://raw.githubusercontent.com/${REPO}/main/bin/bootstrap.sh | bash"
