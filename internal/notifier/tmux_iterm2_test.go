@@ -250,6 +250,10 @@ func TestBuildTmuxClickArgs_Iterm2PlainTmuxWithoutHelperErrors(t *testing.T) {
 }
 
 func TestBuildTmuxClickArgs_Iterm2ControlModeFallsBackWithoutHelper(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("iTerm2 tmux control mode fallback is macOS-specific")
+	}
+
 	withIsolatedEnv(t)
 
 	tmpDir := t.TempDir()
