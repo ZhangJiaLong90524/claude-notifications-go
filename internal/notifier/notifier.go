@@ -308,12 +308,8 @@ func buildTerminalNotifierArgs(title, message, bundleID, cwd string, clickToFocu
 	if clickToFocus {
 		// Note: -sender option removed because it conflicts with -activate on macOS Sequoia (15.x)
 		// Using -sender causes click-to-focus to stop working.
-		if cwd != "" {
-			if script := buildFocusScript(bundleID, cwd); script != "" {
-				args = append(args, "-execute", script)
-			} else {
-				args = append(args, "-activate", bundleID)
-			}
+		if script := buildFocusScript(bundleID, cwd); script != "" {
+			args = append(args, "-execute", script)
 		} else {
 			args = append(args, "-activate", bundleID)
 		}
@@ -333,12 +329,19 @@ func buildTerminalNotifierArgs(title, message, bundleID, cwd string, clickToFocu
 // raise the correct window across Spaces.
 // Returns "" when cwd is empty or unusable (caller should use -activate instead).
 func buildFocusScript(bundleID, cwd string) string {
-	if cwd == "" {
-		return ""
+	if isIterm2BundleID(bundleID) {
+		return buildIterm2FocusScript(cwd)
 	}
 
 	if isGhosttyBundleID(bundleID) {
+		if cwd == "" {
+			return ""
+		}
 		return buildGhosttyFocusScript(bundleID, cwd)
+	}
+
+	if cwd == "" {
+		return ""
 	}
 
 	folderName := filepath.Base(cwd)

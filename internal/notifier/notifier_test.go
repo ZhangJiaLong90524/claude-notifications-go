@@ -1190,6 +1190,7 @@ func TestSendDesktop_SubtitleBranchOnly(t *testing.T) {
 // === Tests for buildFocusScript and helpers ===
 
 func TestBuildFocusScript_EmptyCWD(t *testing.T) {
+	t.Setenv(iTerm2SessionIDEnv, "")
 	script := buildFocusScript("com.microsoft.VSCode", "")
 	if script != "" {
 		t.Errorf("buildFocusScript with empty cwd should return empty, got: %s", script)
@@ -1281,6 +1282,7 @@ func TestCwdToFileURL(t *testing.T) {
 }
 
 func TestBuildFocusScript_RegularTerminal_UsesFocusWindow(t *testing.T) {
+	t.Setenv(iTerm2SessionIDEnv, "")
 	script := buildFocusScript("com.googlecode.iterm2", "/home/user/my-project")
 	// Regular terminals now use focus-window subcommand instead of AppleScript.
 	// This avoids the Automation permission issue on macOS Tahoe (26.x).
@@ -1298,6 +1300,112 @@ func TestBuildFocusScript_RegularTerminal_UsesFocusWindow(t *testing.T) {
 	}
 }
 
+func TestBuildFocusScript_Iterm2PrefersExactSessionHelper(t *testing.T) {
+	setupFakeiTerm2Env(t)
+	overrideIterm2Healthcheck(t, iTerm2HelperReady)
+	t.Setenv(iTerm2SessionIDEnv, "w0t0p0:abc-123")
+
+	script := buildFocusScript("com.googlecode.iterm2", "/home/user/my-project")
+
+	if !strings.Contains(script, "iterm2-select-tab.py") {
+		t.Fatalf("iTerm2 script should use the Python helper, got: %s", script)
+	}
+	if !strings.Contains(script, "--termid 'w0t0p0:abc-123'") {
+		t.Errorf("iTerm2 helper should receive the exact termid, got: %s", script)
+	}
+	if !strings.Contains(script, "--cwd '/home/user/my-project'") {
+		t.Errorf("iTerm2 helper should receive cwd fallback, got: %s", script)
+	}
+	if !strings.Contains(script, "||") {
+		t.Errorf("iTerm2 reveal script should preserve fallback, got: %s", script)
+	}
+	if !strings.Contains(script, "focus-window") {
+		t.Errorf("iTerm2 reveal script should fall back to focus-window, got: %s", script)
+	}
+}
+
+func TestBuildFocusScript_Iterm2WithoutCWDStillTargetsSession(t *testing.T) {
+	setupFakeiTerm2Env(t)
+	overrideIterm2Healthcheck(t, iTerm2HelperReady)
+	t.Setenv(iTerm2SessionIDEnv, "w0t0p1:xyz")
+
+	script := buildFocusScript("com.googlecode.iterm2", "")
+
+	if !strings.Contains(script, "iterm2-select-tab.py") {
+		t.Fatalf("iTerm2 script should use the Python helper, got: %s", script)
+	}
+	if !strings.Contains(script, "--termid 'w0t0p1:xyz'") {
+		t.Errorf("iTerm2 helper should receive the exact termid, got: %s", script)
+	}
+	if strings.Contains(script, "focus-window") {
+		t.Errorf("iTerm2 script without cwd should not add focus-window fallback, got: %s", script)
+	}
+}
+
+func TestBuildFocusScript_Iterm2WithoutHelperFallsBackToFocusWindow(t *testing.T) {
+	withIsolatedEnv(t)
+	t.Setenv(iTerm2SessionIDEnv, "w0t0p9:no-helper")
+
+	script := buildFocusScript("com.googlecode.iterm2", "/home/user/my-project")
+
+	if !strings.Contains(script, "focus-window") {
+		t.Fatalf("iTerm2 should fall back to focus-window when helper is unavailable, got: %s", script)
+	}
+	if strings.Contains(script, "iterm2-select-tab.py") {
+		t.Errorf("iTerm2 should not reference helper when it is unavailable, got: %s", script)
+	}
+}
+
+func TestBuildFocusScript_Iterm2DisabledAPIFallsBackAndPromptsOnce(t *testing.T) {
+	setupFakeiTerm2Env(t)
+	t.Setenv(iTerm2SessionIDEnv, "w0t0p9:disabled")
+
+	restoreExecCommand := installFakeOpen(t, "", iTerm2HealthcheckExitDisabled)
+	defer restoreExecCommand()
+
+	originalSendQuickNotification := sendQuickNotification
+	defer func() {
+		sendQuickNotification = originalSendQuickNotification
+	}()
+
+	promptCount := 0
+	sendQuickNotification = func(title, message, executeCmd string) error {
+		promptCount++
+		return nil
+	}
+
+	script := buildFocusScript("com.googlecode.iterm2", "/home/user/my-project")
+	if !strings.Contains(script, "focus-window") {
+		t.Fatalf("disabled iTerm2 API should fall back to focus-window, got: %s", script)
+	}
+	if strings.Contains(script, "iterm2-select-tab.py") {
+		t.Fatalf("disabled iTerm2 API should not keep helper in execute script, got: %s", script)
+	}
+	if promptCount != 1 {
+		t.Fatalf("expected one prompt on first disabled-api detection, got %d", promptCount)
+	}
+
+	script = buildFocusScript("com.googlecode.iterm2", "/home/user/my-project")
+	if !strings.Contains(script, "focus-window") {
+		t.Fatalf("disabled iTerm2 API should still fall back to focus-window, got: %s", script)
+	}
+	if promptCount != 1 {
+		t.Fatalf("disabled-api prompt should be throttled, got %d prompts", promptCount)
+	}
+}
+
+func TestBuildTmuxCCNotifierArgs_DisabledAPIErrors(t *testing.T) {
+	setupFakeiTerm2Env(t)
+
+	restoreExecCommand := installFakeOpen(t, "", iTerm2HealthcheckExitDisabled)
+	defer restoreExecCommand()
+
+	_, err := buildTmuxCCNotifierArgs("Title", "Msg", "%42", iTerm2BundleID)
+	if err == nil {
+		t.Fatal("expected error when iTerm2 Python API is disabled")
+	}
+}
+
 func TestBuildTerminalNotifierArgs_WithCWD_UsesExecute(t *testing.T) {
 	args := buildTerminalNotifierArgs("Title", "Message", "com.microsoft.VSCode", "/home/user/proj", true)
 	if containsArg(args, "-activate", "com.microsoft.VSCode") {
@@ -1310,6 +1418,7 @@ func TestBuildTerminalNotifierArgs_WithCWD_UsesExecute(t *testing.T) {
 }
 
 func TestBuildTerminalNotifierArgs_WithCWD_TerminalUsesFocusWindow(t *testing.T) {
+	t.Setenv(iTerm2SessionIDEnv, "")
 	args := buildTerminalNotifierArgs("Title", "Message", "com.googlecode.iterm2", "/home/user/my-project", true)
 	execVal := getArgValue(args, "-execute")
 	if execVal == "" {
@@ -1324,6 +1433,25 @@ func TestBuildTerminalNotifierArgs_WithCWD_TerminalUsesFocusWindow(t *testing.T)
 	}
 	if !strings.Contains(execVal, "my-project") {
 		t.Errorf("-execute value should contain cwd path, got: %s", execVal)
+	}
+}
+
+func TestBuildTerminalNotifierArgs_Iterm2SessionIDUsesExecuteWithoutCWD(t *testing.T) {
+	setupFakeiTerm2Env(t)
+	overrideIterm2Healthcheck(t, iTerm2HelperReady)
+	t.Setenv(iTerm2SessionIDEnv, "w0t0p7:test")
+
+	args := buildTerminalNotifierArgs("Title", "Message", "com.googlecode.iterm2", "", true)
+
+	if containsArg(args, "-activate", "com.googlecode.iterm2") {
+		t.Error("iTerm2 exact session targeting should prefer -execute over -activate")
+	}
+	execVal := getArgValue(args, "-execute")
+	if !strings.Contains(execVal, "iterm2-select-tab.py") {
+		t.Errorf("-execute should contain iTerm2 helper, got: %s", execVal)
+	}
+	if !strings.Contains(execVal, "--termid 'w0t0p7:test'") {
+		t.Errorf("-execute should pass termid to helper, got: %s", execVal)
 	}
 }
 
@@ -1350,6 +1478,7 @@ func TestSendQuickNotification_EmptyFields(t *testing.T) {
 }
 
 func TestBuildFocusScript_RegularTerminal_InvalidCWD_FallbackToActivate(t *testing.T) {
+	t.Setenv(iTerm2SessionIDEnv, "")
 	// When cwd is "." (invalid), buildFocusScript returns "" and
 	// buildTerminalNotifierArgs falls back to -activate (app-level focus)
 	args := buildTerminalNotifierArgs("Title", "Msg", "com.googlecode.iterm2", ".", true)
