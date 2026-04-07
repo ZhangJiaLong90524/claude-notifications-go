@@ -67,6 +67,9 @@ func runSendMode(arguments: [String]) {
 
 func failAndExit(_ error: Error) {
     fputs("Error: \(error)\n", stderr)
+    if case PermissionError.denied = error {
+        exit(ExitCode.permissionDenied)
+    }
     exit(ExitCode.failed)
 }
 

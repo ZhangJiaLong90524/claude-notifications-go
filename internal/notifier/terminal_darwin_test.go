@@ -204,6 +204,37 @@ func TestGetTerminalNotifierPath_PluginRoot(t *testing.T) {
 	_ = err
 }
 
+func TestGetTerminalNotifierPath_DevelopmentFallback(t *testing.T) {
+	originalPluginRoot := os.Getenv("CLAUDE_PLUGIN_ROOT")
+	defer os.Setenv("CLAUDE_PLUGIN_ROOT", originalPluginRoot)
+
+	repoRoot := t.TempDir()
+	devBinary := filepath.Join(
+		repoRoot,
+		"swift-notifier",
+		"ClaudeNotifier.app",
+		"Contents",
+		"MacOS",
+		"terminal-notifier-modern",
+	)
+	if err := os.MkdirAll(filepath.Dir(devBinary), 0o755); err != nil {
+		t.Fatalf("failed to create dev notifier dir: %v", err)
+	}
+	if err := os.WriteFile(devBinary, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatalf("failed to create dev notifier binary: %v", err)
+	}
+
+	os.Setenv("CLAUDE_PLUGIN_ROOT", repoRoot)
+
+	path, err := GetTerminalNotifierPath()
+	if err != nil {
+		t.Fatalf("expected dev fallback path, got error: %v", err)
+	}
+	if path != devBinary {
+		t.Fatalf("expected dev notifier path %q, got %q", devBinary, path)
+	}
+}
+
 func TestGetTerminalBundleID_EmptyConfigWithEnvVars(t *testing.T) {
 	// Save and restore original env
 	originalCFBundle := os.Getenv("__CFBundleIdentifier")
