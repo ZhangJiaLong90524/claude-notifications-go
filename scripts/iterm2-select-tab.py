@@ -126,7 +126,7 @@ async def select_tab(connection, target_pane, tmux_path, socket_path):
     2. tty match for plain tmux, then targeted switch-client/select-window/select-pane
     """
     pane_target = normalized_pane(target_pane)
-    pane_number = pane_target.removeprefix("%")
+    pane_number = pane_target[1:] if pane_target.startswith("%") else pane_target
     app = await iterm2.async_get_app(connection)
     tabs = []
     for window in app.windows:
