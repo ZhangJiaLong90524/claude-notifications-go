@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.36.5] - 2026-04-07
+
+### Fixed
+- **macOS: ClaudeNotifier notification clicks work again on iTerm2** — removed the accessory-app bundle setting that caused Notification Center click callbacks to relaunch `ClaudeNotifier` incorrectly and drop the click action before it reached the app
+- **iTerm2: exact tab targeting now matches real `ITERM_SESSION_ID` values** — the helper now normalizes the `wXtYpZ:UUID` environment format to the `wXtYpZ.UUID` format exposed by the iTerm2 Python API, so exact tab selection no longer falls back to ambiguous `cwd` matching when multiple tabs share the same directory
+
 ## [1.36.4] - 2026-04-07
 
 ### Fixed
