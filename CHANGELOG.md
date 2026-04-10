@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.36.7] - 2026-04-10
+
+### Fixed
+- **macOS: click-to-focus now restores minimized terminal windows before focusing them** - notification clicks no longer silently activate the app while leaving the matched window minimized in the Dock; the window is restored first and then raised on the follow-up retry, covering both the Ghostty `AXDocument` path and the generic `AXTitle` matcher ([#67](https://github.com/777genius/claude-notifications-go/issues/67), [#68](https://github.com/777genius/claude-notifications-go/pull/68))
+- **macOS: minimized-window restore now gets a guaranteed post-animation retry** - the internal retry loop now handles the edge case where the restore happens on the last normal attempt, ensuring the final raise still runs after the Dock animation completes
+
 ## [1.36.6] - 2026-04-07
 
 ### Fixed
