@@ -120,10 +120,33 @@ static int requestScreenRecordingAccess(void) {
 	return CGRequestScreenCaptureAccess() ? 1 : 0;
 }
 
+// restoreAndRaiseWindow restores a minimized window before raising it.
+// Returns 2 when the window was successfully un-minimized so the caller can
+// retry after Dock animation, or 1 after attempting the normal raise path.
+static int restoreAndRaiseWindow(AXUIElementRef appEl, AXUIElementRef window) {
+	CFTypeRef minRef = NULL;
+	if (AXUIElementCopyAttributeValue(window, CFSTR("AXMinimized"), &minRef) == kAXErrorSuccess && minRef) {
+		if (CFGetTypeID(minRef) == CFBooleanGetTypeID() && CFBooleanGetValue((CFBooleanRef)minRef)) {
+			AXError err = AXUIElementSetAttributeValue(window, CFSTR("AXMinimized"), kCFBooleanFalse);
+			CFRelease(minRef);
+			if (err == kAXErrorSuccess) {
+				return 2;
+			}
+		} else {
+			CFRelease(minRef);
+		}
+	}
+
+	AXUIElementPerformAction(window, CFSTR("AXRaise"));
+	AXUIElementSetAttributeValue(appEl, CFSTR("AXFrontmost"), kCFBooleanTrue);
+	return 1;
+}
+
 // raiseWindowByAXDocument enumerates AXWindows for the given PID and raises
 // the first window whose AXDocument attribute exactly matches fileURL. Ghostty
 // sets AXDocument to the shell CWD (via OSC 7) as a file:// URL.
-// Returns 1 on match, 0 if not found, -1 if Accessibility permission is missing.
+// Returns 1 after raising, 2 when a minimized window was restored and should be
+// retried, 0 if not found, -1 if Accessibility permission is missing.
 // NOTE: AXWindows only populates after the app has been activated; callers
 // must call activateByPID and wait before calling this function.
 static int raiseWindowByAXDocument(int pid, const char *fileURL) {
@@ -156,12 +179,11 @@ static int raiseWindowByAXDocument(int pid, const char *fileURL) {
 		CFRelease(docRef);
 
 		if (ok && strcmp(buf, fileURL) == 0) {
-			AXUIElementPerformAction(w, CFSTR("AXRaise"));
-			AXUIElementSetAttributeValue(appEl, CFSTR("AXFrontmost"), kCFBooleanTrue);
-			found = 1;
+			found = restoreAndRaiseWindow(appEl, w);
+			free(buf);
+			break;
 		}
 		free(buf);
-		if (found) break;
 	}
 
 	CFRelease(windowsRef);
@@ -191,7 +213,8 @@ static int findSwitchAndActivate(int pid, const char *folderName) {
 
 // raiseWindowByAXTitle enumerates AXWindows for the given PID and raises the
 // first window whose AXTitle contains folderName as a distinct component.
-// Returns 1 on match, 0 if not found, -1 if Accessibility permission is missing.
+// Returns 1 after raising, 2 when a minimized window was restored and should be
+// retried, 0 if not found, -1 if Accessibility permission is missing.
 static int raiseWindowByAXTitle(int pid, const char *folderName) {
 	if (!AXIsProcessTrusted()) {
 		return -1;
@@ -220,9 +243,7 @@ static int raiseWindowByAXTitle(int pid, const char *folderName) {
 		BOOL matched = titleMatchesFolder(title, folder);
 		CFRelease(titleRef);
 		if (matched) {
-			AXUIElementPerformAction(w, CFSTR("AXRaise"));
-			AXUIElementSetAttributeValue(appEl, CFSTR("AXFrontmost"), kCFBooleanTrue);
-			found = 1;
+			found = restoreAndRaiseWindow(appEl, w);
 			break;
 		}
 	}
@@ -244,21 +265,42 @@ import (
 	"github.com/777genius/claude-notifications/internal/config"
 )
 
+const windowFocusRetryAfterRestore = 2
+
 // retryWindowFocus calls fn with increasing delays until a non-zero result.
 // Returns 1 (found), -1 (no permission), or 0 (not found after all attempts).
 // Worst case: 150+250+400 = 800ms. Best case: 150ms.
 func retryWindowFocus(fn func() C.int) C.int {
-	delays := []time.Duration{
+	result := retryWindowFocusWithDelays(func() int {
+		return int(fn())
+	}, []time.Duration{
 		150 * time.Millisecond,
 		250 * time.Millisecond,
 		400 * time.Millisecond,
-	}
-	var result C.int
+	}, time.Sleep)
+	return C.int(result)
+}
+
+func retryWindowFocusWithDelays(fn func() int, delays []time.Duration, sleep func(time.Duration)) int {
+	var result int
+	needsPostRestoreRetry := false
 	for _, d := range delays {
-		time.Sleep(d)
+		sleep(d)
 		result = fn()
+		if result == windowFocusRetryAfterRestore {
+			needsPostRestoreRetry = true
+			continue
+		}
+		needsPostRestoreRetry = false
 		if result != 0 {
 			break
+		}
+	}
+	if needsPostRestoreRetry && len(delays) > 0 {
+		sleep(delays[len(delays)-1])
+		result = fn()
+		if result == windowFocusRetryAfterRestore {
+			return 0
 		}
 	}
 	return result
